@@ -27,7 +27,16 @@ jobs:
           const fs = require('fs');
           const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
           const releaseTag = '${{ github.event.release.tag_name }}';
-          const version = releaseTag.startsWith('v') ? releaseTag.substring(1) : releaseTag;
+          let version = releaseTag.startsWith('v') ? releaseTag.substring(1) : releaseTag;
+          
+          // Ensure semantic versioning format (x.y.z)
+          const versionParts = version.split('.');
+          if (versionParts.length === 1) {
+            version = version + '.0.0';
+          } else if (versionParts.length === 2) {
+            version = version + '.0';
+          }
+          
           pkg.version = version;
           fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
           console.log('Updated version to:', version);
@@ -49,6 +58,14 @@ jobs:
           $releaseTag = "${{ github.event.release.tag_name }}"
           $version = if ($releaseTag.StartsWith("v")) { $releaseTag.Substring(1) } else { $releaseTag }
           
+          # Ensure semantic versioning format (x.y.z)
+          $versionParts = $version.Split('.')
+          if ($versionParts.Length -eq 1) {
+            $version = $version + ".0.0"
+          } elseif ($versionParts.Length -eq 2) {
+            $version = $version + ".0"
+          }
+          
           # Find and rename portable executable
           $portableFile = Get-ChildItem -Path "dist" -Name "*portable.exe" | Select-Object -First 1
           if ($portableFile) {
@@ -64,6 +81,14 @@ jobs:
         run: |
           $releaseTag = "${{ github.event.release.tag_name }}"
           $version = if ($releaseTag.StartsWith("v")) { $releaseTag.Substring(1) } else { $releaseTag }
+          
+          # Ensure semantic versioning format (x.y.z)
+          $versionParts = $version.Split('.')
+          if ($versionParts.Length -eq 1) {
+            $version = $version + ".0.0"
+          } elseif ($versionParts.Length -eq 2) {
+            $version = $version + ".0"
+          }
           
           # Find and rename x64 executable (excluding portable)
           $x64File = Get-ChildItem -Path "dist" -Name "*x64.exe" | Where-Object { $_ -notlike "*portable*" } | Select-Object -First 1

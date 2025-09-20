@@ -593,7 +593,8 @@ async function rescanModels() {
   try {
     showLoading('Reescaneando modelos...');
     
-    const response = await fetch('http://localhost:3000/rescan-models');
+    const port = await window.electronAPI.getServerPort();
+    const response = await fetch(`http://localhost:${port}/rescan-models`);
     const data = await response.json();
     
     if (data.success) {
@@ -660,7 +661,8 @@ function saveSettings() {
 // Thread settings functions
 async function loadThreadSettings() {
   try {
-    const response = await fetch('http://localhost:3000/settings');
+    const port = await window.electronAPI.getServerPort();
+    const response = await fetch(`http://localhost:${port}/settings`);
     const data = await response.json();
     
     if (data.success) {
@@ -710,7 +712,8 @@ async function saveThreadSettings() {
       maxThreads: parseInt(maxThreadsInput?.value || '8')
     };
     
-    const response = await fetch('http://localhost:3000/settings', {
+    const port = await window.electronAPI.getServerPort();
+    const response = await fetch(`http://localhost:${port}/settings`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json'
@@ -755,7 +758,8 @@ function startQueueStatusUpdates() {
   setInterval(async () => {
     if (!settingsPanel.classList.contains('hidden')) {
       try {
-        const response = await fetch('http://localhost:3000/queue-status');
+        const port = await window.electronAPI.getServerPort();
+        const response = await fetch(`http://localhost:${port}/queue-status`);
         const data = await response.json();
         
         if (data.success) {

@@ -83,7 +83,7 @@ let userSettings = {
 };
 
 const app = express();
-const PORT = 3000;
+let PORT = 0; // 0 means random available port
 
 // Middleware
 const cors = require('cors');
@@ -1059,17 +1059,66 @@ app.get('/queue-status', (req, res) => {
   });
 });
 
+// Function to find an available port
+function findAvailablePort(startPort = 3000) {
+  return new Promise((resolve, reject) => {
+    const net = require('net');
+    const server = net.createServer();
+    
+    server.listen(startPort, () => {
+      const port = server.address().port;
+      server.close(() => {
+        resolve(port);
+      });
+    });
+    
+    server.on('error', (err) => {
+      if (err.code === 'EADDRINUSE') {
+        // Port is in use, try next one
+        findAvailablePort(startPort + 1).then(resolve).catch(reject);
+      } else {
+        reject(err);
+      }
+    });
+  });
+}
+
 // Start server
 async function startServer() {
   initializePaths();
   await scanModels();
   
-  app.listen(PORT, () => {
-    console.log(`TTS Server running on http://localhost:${PORT}`);
-    console.log(`Found ${availableModels.length} models`);
-    console.log(`Process queue initialized with ${processQueue.maxConcurrent} max concurrent processes`);
-    console.log(`CPU cores detected: ${CPU_CORES}`);
-  });
+  try {
+    // Find an available port starting from 3000
+    PORT = await findAvailablePort(3000);
+    
+    const server = app.listen(PORT, '127.0.0.1', () => {
+      console.log(`TTS Server running on http://127.0.0.1:${PORT} (localhost only)`);
+      console.log(`Found ${availableModels.length} models`);
+      console.log(`Process queue initialized with ${processQueue.maxConcurrent} max concurrent processes`);
+      console.log(`CPU cores detected: ${CPU_CORES}`);
+      
+      // Export the port for the main process to use
+      if (typeof module !== 'undefined' && module.exports) {
+        module.exports.port = PORT;
+      }
+      global.serverPort = PORT;
+    });
+    
+    // Handle server errors
+    server.on('error', (err) => {
+      console.error('Server error:', err);
+      if (err.code === 'EADDRINUSE') {
+        console.log(`Port ${PORT} is in use, trying to find another port...`);
+        startServer(); // Retry with a different port
+      }
+    });
+    
+    return server;
+  } catch (error) {
+    console.error('Failed to start server:', error);
+    throw error;
+  }
 }
 
 startServer().catch(console.error);

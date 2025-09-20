@@ -68,6 +68,11 @@ function startServer() {
   }
 }
 
+// IPC handler to get server port
+ipcMain.handle('get-server-port', () => {
+  return global.serverPort || 3000; // Fallback to 3000 if not set
+});
+
 // Stop the server
 function stopServer() {
   // Server is now integrated, no separate process to kill

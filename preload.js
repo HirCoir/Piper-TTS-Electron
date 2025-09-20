@@ -1,22 +1,34 @@
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Get server port dynamically
+let serverPort = null;
+
+async function getServerPort() {
+  if (serverPort === null) {
+    serverPort = await ipcRenderer.invoke('get-server-port');
+  }
+  return serverPort;
+}
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
-  getDocumentsPath: () => ipcRenderer.invoke('get-documents-path'),
   selectFolder: () => ipcRenderer.invoke('select-folder'),
   checkFolderExists: (folderPath) => ipcRenderer.invoke('check-folder-exists', folderPath),
   scanModels: (folderPath) => ipcRenderer.invoke('scan-models', folderPath),
+  getDocumentsPath: () => ipcRenderer.invoke('get-documents-path'),
   getAppPath: () => ipcRenderer.invoke('get-app-path'),
   getPiperPath: () => ipcRenderer.invoke('get-piper-path'),
-  getFfmpegPath: () => ipcRenderer.invoke('get-ffmpeg-path')
+  getFFmpegPath: () => ipcRenderer.invoke('get-ffmpeg-path'),
+  getServerPort: () => ipcRenderer.invoke('get-server-port')
 });
 
-// Expose API for server communication
+// Server API for TTS operations
 contextBridge.exposeInMainWorld('serverAPI', {
   convertText: async (text, modelPath, settings) => {
     try {
-      const response = await fetch('http://localhost:3000/convert', {
+      const port = await getServerPort();
+      const response = await fetch(`http://localhost:${port}/convert`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -41,7 +53,8 @@ contextBridge.exposeInMainWorld('serverAPI', {
   
   getModels: async () => {
     try {
-      const response = await fetch('http://localhost:3000/models');
+      const port = await getServerPort();
+      const response = await fetch(`http://localhost:${port}/models`);
       if (!response.ok) {
         throw new Error(`HTTP error! status: ${response.status}`);
       }
@@ -54,7 +67,8 @@ contextBridge.exposeInMainWorld('serverAPI', {
   
   setModelPaths: async (paths) => {
     try {
-      const response = await fetch('http://localhost:3000/set-model-paths', {
+      const port = await getServerPort();
+      const response = await fetch(`http://localhost:${port}/set-model-paths`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

@@ -1,0 +1,79 @@
+name: Build and Release
+
+on:
+  release:
+    types: [created]
+
+jobs:
+  build-and-upload:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
+        
+    - name: Install dependencies
+      run: npm ci
+      
+    - name: Build application
+      run: npm run build
+      
+    - name: Get release version
+      id: get_version
+      shell: pwsh
+      run: |
+        $version = "${{ github.event.release.tag_name }}" -replace '^v', ''
+        echo "VERSION=$version" >> $env:GITHUB_OUTPUT
+        echo "Release version: $version"
+        
+    - name: Rename executables
+      shell: pwsh
+      run: |
+        $version = "${{ steps.get_version.outputs.VERSION }}"
+        $distPath = "dist"
+        
+        # Rename portable executable
+        $portableOld = "$distPath\TTS Electron-1.0.0-portable.exe"
+        $portableNew = "$distPath\TTS Electron-$version-portable.exe"
+        if (Test-Path $portableOld) {
+          Rename-Item $portableOld $portableNew
+          echo "Renamed portable: $portableNew"
+        }
+        
+        # Rename x64 executable
+        $x64Old = "$distPath\TTS Electron-1.0.0-x64.exe"
+        $x64New = "$distPath\TTS Electron-$version-x64.exe"
+        if (Test-Path $x64Old) {
+          Rename-Item $x64Old $x64New
+          echo "Renamed x64: $x64New"
+        }
+        
+        # List all files in dist directory for verification
+        echo "Files in dist directory:"
+        Get-ChildItem $distPath -Name
+        
+    - name: Upload portable executable to release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./dist/TTS Electron-${{ steps.get_version.outputs.VERSION }}-portable.exe
+        asset_name: TTS Electron-${{ steps.get_version.outputs.VERSION }}-portable.exe
+        asset_content_type: application/octet-stream
+        
+    - name: Upload x64 executable to release
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ github.event.release.upload_url }}
+        asset_path: ./dist/TTS Electron-${{ steps.get_version.outputs.VERSION }}-x64.exe
+        asset_name: TTS Electron-${{ steps.get_version.outputs.VERSION }}-x64.exe
+        asset_content_type: application/octet-stream

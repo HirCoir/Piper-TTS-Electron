@@ -1,0 +1,1094 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TTS Electron - Convertidor de Texto a Voz</title>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: #1c1c1c; /* Adjusted for more Windows 11 dark theme feel */
+            color: #ffffff;
+            height: 100vh;
+            overflow: auto;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .container {
+            width: 100%;
+            height: 100%;
+            padding: 0; /* Removed padding for full coverage */
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+        }
+
+        .header {
+            text-align: center;
+            margin-bottom: 0;
+            padding: 12px 16px; /* Minimal padding */
+            background: rgba(255, 255, 255, 0.02); /* Subtle acrylic-like */
+            backdrop-filter: blur(10px); /* Windows 11 acrylic effect */
+            -webkit-backdrop-filter: blur(10px);
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05); /* Subtle border */
+        }
+
+        .header h1 {
+            font-size: 1.5rem; /* Smaller for minimalism */
+            margin-bottom: 4px;
+            color: #ffffff;
+        }
+
+        .header p {
+            font-size: 0.9rem;
+            opacity: 0.7;
+        }
+
+        .main-content {
+            display: flex;
+            gap: 12px; /* Reduced gap for minimalism */
+            flex: 1;
+            overflow: hidden;
+            padding: 12px; /* Padding here instead of container */
+        }
+
+        .left-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow: hidden;
+        }
+
+        .right-panel {
+            width: 300px; /* Slightly reduced for minimalism */
+            flex: none;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            overflow: hidden;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.02); /* Subtle background */
+            backdrop-filter: blur(10px); /* Acrylic effect */
+            -webkit-backdrop-filter: blur(10px);
+            border-radius: 12px; /* Softer rounded corners like Windows 11 */
+            padding: 12px; /* Reduced padding */
+            border: none; /* Removed border for minimalism */
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1); /* Subtle shadow */
+        }
+
+        .card h2 {
+            margin-bottom: 12px;
+            font-size: 1rem; /* Smaller for minimalism */
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            opacity: 0.9;
+        }
+
+        .text-input-section {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        #text-input {
+            flex: 1; /* Make it fill the available space */
+            min-height: 100px;
+            padding: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            color: #ffffff;
+            font-size: 1rem;
+            line-height: 1.5;
+            resize: none;
+            overflow-y: auto; /* Scroll if text exceeds, but JS handles auto-grow */
+            transition: border-color 0.2s ease;
+        }
+
+        #text-input::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        #text-input:focus {
+            outline: none;
+            border-color: #0078d4; /* Windows 11 accent color */
+        }
+
+        .model-selection {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden; /* Prevent internal overflow */
+        }
+
+        .selected-model-display {
+            padding: 10px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 8px;
+            margin-bottom: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        #selected-model {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            min-height: 40px;
+        }
+
+        .selected-model-image, .selected-model-placeholder {
+            width: 36px;
+            height: 36px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 1.1rem;
+            color: rgba(255, 255, 255, 0.5);
+        }
+
+        .selected-model-name {
+            font-weight: 500;
+            font-size: 0.95rem;
+        }
+
+        .selected-model-language {
+            font-size: 0.8rem;
+            opacity: 0.6;
+        }
+
+        .model-selector-container {
+            flex: 1;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            max-height: none; /* Remove max-height to allow full expansion */
+        }
+
+        .model-search {
+            padding: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            position: sticky;
+            top: 0;
+            background: #2d2d2d; /* Solid dark background */
+            z-index: 10; /* Ensure it stays above other elements */
+            border-radius: 8px 8px 0 0; /* Rounded top corners */
+        }
+
+        #model-search {
+            width: 100%;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.15);
+            border-radius: 6px;
+            background: #1e1e1e; /* Darker solid background */
+            color: #ffffff;
+            font-size: 0.9rem;
+            transition: all 0.2s ease;
+        }
+
+        #model-search:focus {
+            outline: none;
+            border-color: #0078d4;
+            box-shadow: 0 0 0 2px rgba(0, 120, 212, 0.2);
+        }
+
+        #model-search::placeholder {
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        #model-list {
+            padding: 8px;
+            overflow-y: auto; /* Ensure scrollbar is visible */
+        }
+
+        .model-card {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px;
+            margin-bottom: 6px;
+            border-radius: 8px;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .model-card:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .model-card.selected {
+            background: rgba(0, 120, 212, 0.15);
+            border: 1px solid rgba(0, 120, 212, 0.3);
+        }
+
+        .model-image, .model-image-placeholder {
+            width: 30px;
+            height: 30px;
+            border-radius: 50%;
+            background: rgba(255, 255, 255, 0.08);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9rem;
+            color: rgba(255, 255, 255, 0.5);
+            flex-shrink: 0;
+        }
+
+        .model-info {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .model-name {
+            font-weight: 500;
+            font-size: 0.85rem;
+            margin-bottom: 2px;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .model-description {
+            font-size: 0.7rem;
+            opacity: 0.6;
+            margin-bottom: 2px;
+            display: -webkit-box;
+            -webkit-line-clamp: 2;
+            -webkit-box-orient: vertical;
+            overflow: hidden;
+        }
+
+        .model-meta {
+            display: flex;
+            gap: 10px;
+            font-size: 0.65rem;
+            opacity: 0.5;
+        }
+
+        .model-language, .model-source {
+            display: flex;
+            align-items: center;
+            gap: 3px;
+        }
+
+        .no-models {
+            text-align: center;
+            padding: 24px 12px;
+            color: rgba(255, 255, 255, 0.4);
+        }
+
+        .controls-section {
+            margin-top: 12px;
+        }
+
+        #generate-btn {
+            width: 100%;
+            padding: 10px;
+            background: #0078d4;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            font-size: 0.95rem;
+            font-weight: 500;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 6px;
+        }
+
+        #generate-btn:hover:not(:disabled) {
+            background: #0063b1;
+        }
+
+        #generate-btn:disabled {
+            background: rgba(255, 255, 255, 0.08);
+            cursor: not-allowed;
+        }
+
+        .audio-section {
+            margin-top: 12px;
+        }
+
+        #audio-container {
+            text-align: center;
+        }
+
+        #audio-player {
+            width: 100%;
+            margin-top: 8px;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .settings-btn {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.08);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        .settings-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .settings-panel {
+            position: fixed;
+            top: 0;
+            right: 0;
+            width: 300px;
+            height: 100vh;
+            background: rgba(28, 28, 28, 0.95); /* Windows 11-like */
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            padding: 12px;
+            transform: translateX(100%);
+            transition: transform 0.3s ease;
+            z-index: 1000;
+            overflow-y: auto;
+            border-left: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .settings-panel:not(.hidden) {
+            transform: translateX(0);
+        }
+
+        .settings-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 16px;
+            padding-bottom: 8px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .settings-header h2 {
+            font-size: 1.2rem;
+        }
+
+        .close-settings {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s ease;
+        }
+
+        .close-settings:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .settings-section {
+            margin-bottom: 16px;
+        }
+
+        .settings-section h3 {
+            margin-bottom: 8px;
+            font-size: 0.95rem;
+            color: #ffffff;
+        }
+
+        .setting-item {
+            margin-bottom: 8px;
+        }
+
+        .setting-item label {
+            display: block;
+            margin-bottom: 4px;
+            font-size: 0.8rem;
+            opacity: 0.8;
+        }
+
+        .setting-item input, .setting-item select {
+            width: 100%;
+            padding: 8px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.02);
+            color: white;
+            font-size: 0.8rem;
+        }
+
+        .folder-paths {
+            max-height: 140px;
+            overflow-y: auto;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        .folder-path-item {
+            padding: 6px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+        }
+
+        .folder-info {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            font-size: 0.75rem;
+        }
+
+        .folder-status {
+            margin-left: auto;
+            padding: 2px 6px;
+            border-radius: 12px;
+            font-size: 0.65rem;
+            font-weight: 500;
+        }
+
+        .status-available {
+            background: rgba(76, 175, 80, 0.15);
+            color: #4caf50;
+        }
+
+        .status-missing {
+            background: rgba(244, 67, 54, 0.15);
+            color: #f44336;
+        }
+
+        .btn-secondary {
+            padding: 6px 12px;
+            background: rgba(255, 255, 255, 0.08);
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            font-size: 0.8rem;
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        .progress-container, .notification {
+            position: fixed;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            background: rgba(28, 28, 28, 0.95);
+            padding: 20px;
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            z-index: 2000;
+            min-width: 220px;
+            text-align: center;
+        }
+
+        .progress-message {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            font-size: 0.95rem;
+        }
+
+        .loading-spinner {
+            width: 14px;
+            height: 14px;
+            border: 2px solid rgba(255, 255, 255, 0.2);
+            border-top: 2px solid white;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .notification {
+            position: fixed;
+            top: 12px;
+            right: 12px;
+            transform: none;
+            left: auto;
+            min-width: 220px;
+            max-width: 300px;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 10px 12px;
+            border-radius: 12px;
+        }
+
+        .notification-error {
+            border-left: 4px solid #f44336;
+            background: rgba(244, 67, 54, 0.1);
+        }
+
+        .notification-success {
+            border-left: 4px solid #4caf50;
+            background: rgba(76, 175, 80, 0.1);
+        }
+
+        .notification-close {
+            background: none;
+            border: none;
+            color: white;
+            cursor: pointer;
+            margin-left: auto;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s ease;
+        }
+
+        .notification-close:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
+        .hidden {
+            display: none !important;
+        }
+
+        .model-count {
+            font-size: 0.75rem;
+            opacity: 0.5;
+            margin-bottom: 6px;
+        }
+
+        /* Responsive design */
+        @media (max-width: 1024px) {
+            .right-panel {
+                width: 280px;
+            }
+            .main-content {
+                padding: 10px;
+            }
+        }
+
+        @media (max-width: 768px) {
+            .main-content {
+                flex-direction: column;
+                padding: 8px;
+                overflow: auto;
+            }
+
+            .right-panel {
+                width: auto;
+                order: -1;
+            }
+
+            .header h1 {
+                font-size: 1.3rem;
+            }
+
+            #text-input {
+                min-height: 80px;
+            }
+
+            .model-selector-container {
+                max-height: 200px;
+            }
+        }
+
+        @media (max-width: 480px) {
+            .main-content {
+                padding: 4px;
+            }
+
+            .header {
+                padding: 8px;
+            }
+
+            .card {
+                padding: 8px;
+            }
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 2.5px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: rgba(255, 255, 255, 0.15);
+            border-radius: 2.5px;
+        }
+
+        ::-webkit-scrollbar-thumb:hover {
+            background: rgba(255, 255, 255, 0.25);
+        }
+
+        /* Context Menu Styles */
+        .context-menu {
+            background: rgba(28, 28, 28, 0.95);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 8px;
+            padding: 4px 0;
+            min-width: 160px;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+            z-index: 10000;
+        }
+
+        /* Chat Mode Button */
+        .chat-mode-btn {
+            position: fixed;
+            top: 12px;
+            right: 50px;
+            width: 36px;
+            height: 36px;
+            background: rgba(255, 255, 255, 0.08);
+            border: none;
+            border-radius: 50%;
+            color: white;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: background 0.2s ease;
+            z-index: 999;
+        }
+
+        .chat-mode-btn:hover {
+            background: rgba(255, 255, 255, 0.15);
+        }
+
+        /* Chat Mode UI */
+        .chat-mode-ui {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(28, 28, 28, 0.95);
+            backdrop-filter: blur(20px);
+            -webkit-backdrop-filter: blur(20px);
+            z-index: 1001;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .chat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 16px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .chat-header h2 {
+            margin: 0;
+            font-size: 1.2rem;
+        }
+
+        .close-chat-mode {
+            background: none;
+            border: none;
+            color: white;
+            font-size: 1.2rem;
+            cursor: pointer;
+            padding: 4px;
+            border-radius: 4px;
+            transition: background 0.2s ease;
+        }
+
+        .close-chat-mode:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .chat-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 16px;
+            overflow: hidden;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            margin-bottom: 16px;
+            padding: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            border-radius: 8px;
+        }
+
+        .message {
+            margin-bottom: 12px;
+            padding: 8px 12px;
+            border-radius: 8px;
+            max-width: 80%;
+        }
+
+        .message-content {
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+
+        .user-message {
+            background: rgba(0, 120, 212, 0.2);
+            margin-left: auto;
+        }
+
+        .ai-message {
+            background: rgba(255, 255, 255, 0.05);
+            margin-right: auto;
+        }
+
+        .ai-message .audio-controls {
+            margin-top: 8px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        .ai-message .audio-controls audio {
+            flex: 1;
+            height: 30px;
+        }
+
+        .ai-message .audio-controls .regenerate-audio {
+            background: rgba(0, 120, 212, 0.3);
+            border: none;
+            border-radius: 4px;
+            color: white;
+            padding: 4px 8px;
+            cursor: pointer;
+            font-size: 0.8rem;
+        }
+
+        .ai-message .audio-controls .regenerate-audio:hover {
+            background: rgba(0, 120, 212, 0.5);
+        }
+
+        .ai-message .loading-dots {
+            display: inline-block;
+            width: 20px;
+            height: 20px;
+        }
+
+        .ai-message .loading-dots::after {
+            content: "•••";
+            animation: loadingDots 1.5s infinite;
+        }
+
+        @keyframes loadingDots {
+            0% { opacity: 0.2; }
+            50% { opacity: 1; }
+            100% { opacity: 0.2; }
+        }
+
+        .chat-input {
+            display: flex;
+            gap: 8px;
+        }
+
+        #chat-input {
+            flex: 1;
+            padding: 10px 12px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.05);
+            color: white;
+            font-size: 1rem;
+        }
+
+        #send-chat-message {
+            padding: 10px 15px;
+            background: #0078d4;
+            border: none;
+            border-radius: 6px;
+            color: white;
+            cursor: pointer;
+            transition: background 0.2s ease;
+        }
+
+        #send-chat-message:hover {
+            background: #0063b1;
+        }
+
+        .context-menu-item {
+            padding: 8px 12px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 0.85rem;
+            color: #ffffff;
+            transition: background 0.2s ease;
+        }
+
+        .context-menu-item:hover {
+            background: rgba(255, 255, 255, 0.1);
+        }
+
+        .context-menu-separator {
+            height: 1px;
+            background: rgba(255, 255, 255, 0.1);
+            margin: 4px 0;
+        }
+
+        .context-menu-item i {
+            width: 14px;
+            text-align: center;
+            opacity: 0.7;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1><i class="fas fa-microphone-alt"></i> TTS Electron</h1>
+            <p>Convertidor de Texto a Voz con Modelos Piper</p>
+        </header>
+
+        <main class="main-content">
+            <div class="left-panel">
+                <div class="card text-input-section">
+                    <h2><i class="fas fa-edit"></i> Texto a Convertir</h2>
+                    <textarea 
+                        id="text-input" 
+                        placeholder="Escribe o pega aquí el texto que deseas convertir a voz..."
+                    ></textarea>
+                </div>
+
+                <div class="card controls-section">
+                    <button id="generate-btn" disabled>
+                        <i class="fas fa-play"></i>
+                        <span>Selecciona un modelo primero</span>
+                    </button>
+                </div>
+
+                <div class="card audio-section hidden" id="audio-container">
+                    <h2><i class="fas fa-volume-up"></i> Audio Generado</h2>
+                    <audio id="audio-player" controls>
+                        Tu navegador no soporta el elemento de audio.
+                    </audio>
+                </div>
+            </div>
+
+            <div class="right-panel">
+                <div class="card model-selection">
+                    <h2><i class="fas fa-robot"></i> Selección de Modelo</h2>
+                    
+                    <div class="selected-model-display">
+                        <div id="selected-model">
+                            <div class="selected-model-placeholder">
+                                <i class="fas fa-robot"></i>
+                            </div>
+                            <div>
+                                <div class="selected-model-name">Ningún modelo seleccionado</div>
+                                <div class="selected-model-language">Selecciona un modelo de la lista</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="model-count" id="model-count">Cargando modelos...</div>
+
+                    <div class="model-selector-container">
+                        <div class="model-search">
+                            <input 
+                                type="text" 
+                                id="model-search" 
+                                placeholder="Buscar modelos..."
+                            >
+                        </div>
+                        <div id="model-list">
+                            <div class="no-models">
+                                <i class="fas fa-spinner fa-spin text-4xl mb-4"></i>
+                                <p>Cargando modelos...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Settings Button -->
+    <button class="settings-btn" id="settings-btn">
+        <i class="fas fa-cog"></i>
+    </button>
+
+    <button class="chat-mode-btn" id="chat-mode-btn">
+        <i class="fas fa-comments"></i>
+    </button>
+
+    <!-- Chat Mode UI -->
+    <div class="chat-mode-ui hidden" id="chat-mode-ui">
+        <div class="chat-header">
+            <h2><i class="fas fa-comments"></i> Chat con IA</h2>
+            <button class="close-chat-mode" id="close-chat-mode">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <div class="chat-container">
+            <div class="chat-messages" id="chat-messages">
+                <!-- Chat messages will be displayed here -->
+            </div>
+
+            <div class="chat-input">
+                <input type="text" id="chat-input" placeholder="Escribe un mensaje...">
+                <button id="send-chat-message">
+                    <i class="fas fa-paper-plane"></i>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Settings Panel -->
+    <div class="settings-panel hidden" id="settings-panel">
+        <div class="settings-header">
+            <h2><i class="fas fa-cog"></i> Configuración</h2>
+            <button class="close-settings" id="close-settings">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+
+        <div class="settings-section">
+            <h3><i class="fas fa-robot"></i> Configuración de IA</h3>
+            
+            <div class="setting-item">
+                <label for="api-base">API Base URL</label>
+                <input type="text" id="api-base" placeholder="https://api.openai.com/v1">
+            </div>
+
+            <div class="setting-item">
+                <label for="api-key">API Key</label>
+                <input type="password" id="api-key" placeholder="sk-...">
+            </div>
+
+            <div class="setting-item">
+                <label for="ai-model-selector">Modelo IA</label>
+                <select id="ai-model-selector">
+                    <option value="">Configura API primero</option>
+                </select>
+            </div>
+
+            <div class="setting-item">
+                <button class="btn-secondary" id="fetch-models-btn">
+                    <i class="fas fa-sync"></i> Cargar Modelos IA
+                </button>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h3><i class="fas fa-folder"></i> Carpetas de Modelos</h3>
+            <div class="folder-paths" id="folder-paths">
+                <div class="folder-path-item">
+                    <div class="folder-info">
+                        <i class="fas fa-spinner fa-spin"></i>
+                        <span>Cargando rutas...</span>
+                    </div>
+                </div>
+            </div>
+            <div style="margin-top: 8px; display: flex; gap: 6px;">
+                <button class="btn-secondary" id="add-folder-btn">
+                    <i class="fas fa-plus"></i> Agregar Carpeta
+                </button>
+                <button class="btn-secondary" id="rescan-btn">
+                    <i class="fas fa-sync"></i> Reescanear
+                </button>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h3><i class="fas fa-microchip"></i> Configuración de Procesamiento</h3>
+            
+            <div class="setting-item">
+                <label for="auto-threads-setting">
+                    <input type="checkbox" id="auto-threads-setting" checked style="margin-right: 6px;">
+                    Detectar automáticamente hilos de CPU
+                </label>
+                <div style="font-size: 0.7rem; opacity: 0.6; margin-top: 4px;" id="cpu-info">
+                    CPU detectado: <span id="cpu-cores">-</span> núcleos
+                </div>
+            </div>
+
+            <div class="setting-item" id="manual-threads-container" style="display: none;">
+                <label for="max-threads-setting">Máximo de procesos simultáneos (1-32)</label>
+                <input type="number" id="max-threads-setting" min="1" max="32" value="8">
+                <div style="font-size: 0.7rem; opacity: 0.6; margin-top: 4px;">
+                    Recomendado: <span id="recommended-threads">8</span> (2x núcleos de CPU)
+                </div>
+            </div>
+
+            <div class="setting-item">
+                <div style="font-size: 0.75rem; padding: 6px; background: rgba(255, 255, 255, 0.02); border-radius: 6px;">
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                        <span>Estado actual:</span>
+                        <span id="queue-status">-</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-bottom: 2px;">
+                        <span>Ejecutándose:</span>
+                        <span id="running-processes">0</span>
+                    </div>
+                    <div style="display: flex; justify-content: space-between;">
+                        <span>En cola:</span>
+                        <span id="queued-processes">0</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="settings-section">
+            <h3><i class="fas fa-sliders-h"></i> Configuración de Audio</h3>
+            
+            <div class="setting-item">
+                <label for="speaker-setting">Hablante (Speaker ID)</label>
+                <input type="number" id="speaker-setting" min="0" max="10" value="0">
+            </div>
+
+            <div class="setting-item">
+                <label for="noise-scale-setting">Escala de Ruido (0.0 - 1.0)</label>
+                <input type="number" id="noise-scale-setting" min="0" max="1" step="0.001" value="0.667">
+            </div>
+
+            <div class="setting-item">
+                <label for="length-scale-setting">Escala de Longitud (0.5 - 2.0)</label>
+                <input type="number" id="length-scale-setting" min="0.5" max="2" step="0.1" value="1.0">
+            </div>
+
+            <div class="setting-item">
+                <label for="noise-w-setting">Ruido W (0.0 - 1.0)</label>
+                <input type="number" id="noise-w-setting" min="0" max="1" step="0.1" value="0.8">
+            </div>
+        </div>
+    </div>
+
+    <!-- Progress Container -->
+    <div class="progress-container hidden" id="progress-container">
+        <div class="progress-message">
+            <div class="loading-spinner"></div>
+            <span>Procesando...</span>
+        </div>
+    </div>
+
+    <script src="renderer.js"></script>
+</body>
+</html>

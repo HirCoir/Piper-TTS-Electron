@@ -1,0 +1,83 @@
+name: Build and Release Electron App
+
+on:
+  workflow_dispatch:
+  release:
+    types: [created, published]
+
+permissions:
+  contents: write
+
+jobs:
+  build_windows:
+    name: "Build Windows Electron App"
+    runs-on: windows-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '18'
+          cache: 'npm'
+
+      - name: Update package.json version
+        run: |
+          node -e "
+          const fs = require('fs');
+          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
+          const releaseTag = '${{ github.event.release.tag_name }}';
+          const version = releaseTag.startsWith('v') ? releaseTag.substring(1) : releaseTag;
+          pkg.version = version;
+          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
+          console.log('Updated version to:', version);
+          "
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Electron app
+        run: npm run build
+
+      - name: List dist contents
+        run: dir dist
+
+      - name: Rename and upload portable executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseTag = "${{ github.event.release.tag_name }}"
+          $version = if ($releaseTag.StartsWith("v")) { $releaseTag.Substring(1) } else { $releaseTag }
+          
+          # Find and rename portable executable
+          $portableFile = Get-ChildItem -Path "dist" -Name "*portable.exe" | Select-Object -First 1
+          if ($portableFile) {
+            $newPortableName = $portableFile -replace "1\.0\.0", $version
+            Rename-Item -Path "dist\$portableFile" -NewName $newPortableName
+            gh release upload ${{ github.event.release.tag_name }} "dist\$newPortableName" --clobber --repo ${{ github.repository }}
+            Write-Host "Uploaded: $newPortableName"
+          }
+
+      - name: Rename and upload x64 executable
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $releaseTag = "${{ github.event.release.tag_name }}"
+          $version = if ($releaseTag.StartsWith("v")) { $releaseTag.Substring(1) } else { $releaseTag }
+          
+          # Find and rename x64 executable (excluding portable)
+          $x64File = Get-ChildItem -Path "dist" -Name "*x64.exe" | Where-Object { $_ -notlike "*portable*" } | Select-Object -First 1
+          if ($x64File) {
+            $newX64Name = $x64File -replace "1\.0\.0", $version
+            Rename-Item -Path "dist\$x64File" -NewName $newX64Name
+            gh release upload ${{ github.event.release.tag_name }} "dist\$newX64Name" --clobber --repo ${{ github.repository }}
+            Write-Host "Uploaded: $newX64Name"
+          }
+
+      - name: Upload build artifacts (optional)
+        uses: actions/upload-artifact@v4
+        with:
+          name: windows-executables
+          path: dist/*.exe
+          retention-days: 7

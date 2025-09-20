@@ -47,6 +47,8 @@ jobs:
 
       - name: Build Electron app
         run: npm run build
+        env:
+          GH_TOKEN: ""
 
       - name: List dist contents
         run: dir dist

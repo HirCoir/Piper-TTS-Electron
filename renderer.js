@@ -3,8 +3,6 @@ let availableModels = [];
 let selectedModel = null;
 let isConverting = false;
 let currentAudio = null;
-let chatContext = [];
-let lastConvertedText = '';
 
 // DOM elements
 let textInput;
@@ -18,20 +16,6 @@ let progressContainer;
 let settingsPanel;
 let folderPathsContainer;
 
-// Chat mode elements
-let chatModeUI;
-let chatMessages;
-let chatInput;
-let sendChatMessage;
-let closeChatMode;
-let chatModeBtn;
-
-// AI settings elements
-let apiBaseInput;
-let apiKeyInput;
-let aiModelSelector;
-let fetchModelsBtn;
-
 // Initialize the application
 document.addEventListener('DOMContentLoaded', async () => {
   initializeElements();
@@ -39,7 +23,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   await loadSettings();
   autoResizeTextarea(); // Resize on load if there's saved text
-  loadAISettings();
 });
 
 function initializeElements() {
@@ -53,20 +36,6 @@ function initializeElements() {
   progressContainer = document.getElementById('progress-container');
   settingsPanel = document.getElementById('settings-panel');
   folderPathsContainer = document.getElementById('folder-paths');
-  
-  // Chat mode elements
-  chatModeUI = document.getElementById('chat-mode-ui');
-  chatMessages = document.getElementById('chat-messages');
-  chatInput = document.getElementById('chat-input');
-  sendChatMessage = document.getElementById('send-chat-message');
-  closeChatMode = document.getElementById('close-chat-mode');
-  chatModeBtn = document.getElementById('chat-mode-btn');
-  
-  // AI settings elements
-  apiBaseInput = document.getElementById('api-base');
-  apiKeyInput = document.getElementById('api-key');
-  aiModelSelector = document.getElementById('ai-model-selector');
-  fetchModelsBtn = document.getElementById('fetch-models-btn');
 }
 
 function setupEventListeners() {
@@ -93,26 +62,25 @@ function setupEventListeners() {
     settingsPanel.classList.add('hidden');
   });
   
-  // Chat mode button
-  chatModeBtn.addEventListener('click', toggleChatMode);
+  // Thread settings
+  const autoThreadsCheckbox = document.getElementById('auto-threads-setting');
+  const maxThreadsInput = document.getElementById('max-threads-setting');
+  const manualThreadsContainer = document.getElementById('manual-threads-container');
   
-  // Close chat mode
-  closeChatMode.addEventListener('click', () => {
-    chatModeUI.classList.add('hidden');
-  });
+  if (autoThreadsCheckbox) {
+    autoThreadsCheckbox.addEventListener('change', () => {
+      if (autoThreadsCheckbox.checked) {
+        manualThreadsContainer.style.display = 'none';
+      } else {
+        manualThreadsContainer.style.display = 'block';
+      }
+      saveThreadSettings();
+    });
+  }
   
-  // Send chat message
-  sendChatMessage.addEventListener('click', sendChatMessageToAI);
-  
-  // Send message on Enter key
-  chatInput.addEventListener('keypress', (e) => {
-    if (e.key === 'Enter') {
-      sendChatMessageToAI();
-    }
-  });
-  
-  // Fetch AI models
-  fetchModelsBtn.addEventListener('click', fetchAIModels);
+  if (maxThreadsInput) {
+    maxThreadsInput.addEventListener('change', saveThreadSettings);
+  }
   
   // Text input auto-save, auto-resize, and paste handling
   textInput.addEventListener('input', () => {
@@ -127,332 +95,15 @@ function setupEventListeners() {
   if (savedText) {
     textInput.value = savedText;
   }
-  
-  // Load saved AI settings
-  loadAISettings();
-  // Load chat context
-  loadChatContext();
-}
-
-// Chat mode functionality
-function toggleChatMode() {
-  chatModeUI.classList.toggle('hidden');
-  
-  // Clear chat messages when opening chat mode
-  if (!chatModeUI.classList.contains('hidden')) {
-    chatMessages.innerHTML = '';
-    // Also clear chat context when opening new chat session
-    chatContext = [];
-    saveChatContext();
-  }
-}
-
-async function sendChatMessageToAI() {
-  const message = chatInput.value.trim();
-  if (!message) return;
-  
-  // Add user message to chat UI
-  addMessageToChat('user', message);
-  chatInput.value = '';
-  
-  // Add user message to chat context after UI update
-  chatContext.push({ role: 'user', content: message });
-  saveChatContext();
-  
-  // Get AI settings
-  const apiBase = apiBaseInput.value;
-  const apiKey = apiKeyInput.value;
-  const model = aiModelSelector.value;
-  
-  if (!apiBase || !apiKey || !model) {
-    addMessageToChat('ai', 'Por favor configura la API base, API key y selecciona un modelo primero.');
-    return;
-  }
-  
-  // Add AI message with loading indicator
-  const aiMessageDiv = addStreamingMessageToChat('ai', '');
-  
-  try {
-    // Reset last converted text
-    lastConvertedText = '';
-    
-    // Send message to AI with streaming and context
-    // Remove real-time TTS conversion and wait for complete response
-    const aiResponse = await callAIModel(apiBase, apiKey, model, message, null, chatContext);
-    
-    // Final update with complete response
-    updateStreamingMessageContent(aiMessageDiv, aiResponse);
-    
-    // Add AI response to chat context
-    chatContext.push({ role: 'assistant', content: aiResponse });
-    saveChatContext();
-    
-    // Convert complete AI response to speech and play automatically
-    if (selectedModel) {
-      try {
-        const settings = getAudioSettings();
-        const response = await window.serverAPI.convertText(aiResponse, selectedModel.onnxPath, settings);
-        
-        if (response.success) {
-          updateStreamingMessageAudio(aiMessageDiv, response.audio);
-          // Auto-play the audio when response is complete
-          const audioElement = aiMessageDiv.querySelector('audio');
-          if (audioElement) {
-            audioElement.play();
-          }
-        }
-      } catch (audioError) {
-        console.error('Error generating audio:', audioError);
-      }
-    }
-  } catch (error) {
-    console.error('Error sending message to AI:', error);
-    updateStreamingMessageContent(aiMessageDiv, 'Error al comunicarse con la IA: ' + error.message);
-  }
-}
-
-function addMessageToChat(role, content) {
-  const messageDiv = document.createElement('div');
-  messageDiv.className = `message ${role}-message`;
-  
-  const contentDiv = document.createElement('div');
-  contentDiv.className = 'message-content';
-  contentDiv.textContent = content;
-  messageDiv.appendChild(contentDiv);
-  
-  chatMessages.appendChild(messageDiv);
-  
-  // Scroll to bottom
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-  
-  return messageDiv;
-}
-
-function addStreamingMessageToChat(role, content) {
-  const messageDiv = document.createElement('div');
-  messageDiv.className = `message ${role}-message`;
-  
-  const contentDiv = document.createElement('div');
-  contentDiv.className = 'message-content';
-  contentDiv.textContent = content;
-  messageDiv.appendChild(contentDiv);
-  
-  // Add loading indicator
-  const loadingDots = document.createElement('span');
-  loadingDots.className = 'loading-dots';
-  messageDiv.appendChild(loadingDots);
-  
-  chatMessages.appendChild(messageDiv);
-  
-  // Scroll to bottom
-  chatMessages.scrollTop = chatMessages.scrollHeight;
-  
-  return messageDiv;
-}
-
-function updateStreamingMessageContent(messageDiv, content) {
-  const contentDiv = messageDiv.querySelector('.message-content');
-  if (contentDiv) {
-    contentDiv.textContent = content;
-    chatMessages.scrollTop = chatMessages.scrollHeight;
-  }
-}
-
-function updateStreamingMessageAudio(messageDiv, audioBlob) {
-  // Remove existing audio controls if present
-  const existingAudioControls = messageDiv.querySelector('.audio-controls');
-  if (existingAudioControls) {
-    messageDiv.removeChild(existingAudioControls);
-  }
-  
-  // Create audio controls
-  const audioControlsDiv = document.createElement('div');
-  audioControlsDiv.className = 'audio-controls';
-  
-  const audioElement = document.createElement('audio');
-  audioElement.controls = true;
-  
-  // Fix for createObjectURL error - ensure we're working with a proper Blob
-  try {
-    if (audioBlob instanceof Blob) {
-      audioElement.src = URL.createObjectURL(audioBlob);
-    } else if (typeof audioBlob === 'string') {
-      // If it's a string, it might be a data URL or file path
-      audioElement.src = audioBlob;
-    } else {
-      // If it's an object with a URL property
-      audioElement.src = audioBlob.url || URL.createObjectURL(audioBlob.blob);
-    }
-  } catch (error) {
-    console.error('Error creating audio URL:', error);
-    // Fallback to a generic error message or default audio source
-    audioElement.src = '';
-  }
-  
-  const regenerateBtn = document.createElement('button');
-  regenerateBtn.className = 'regenerate-audio';
-  regenerateBtn.innerHTML = '<i class="fas fa-sync"></i>';
-  regenerateBtn.onclick = () => {
-    audioElement.play();
-  };
-  
-  audioControlsDiv.appendChild(audioElement);
-  audioControlsDiv.appendChild(regenerateBtn);
-  
-  messageDiv.appendChild(audioControlsDiv);
-}
-
-async function callAIModel(apiBase, apiKey, model, message, onTextUpdate, chatContext) {
-  // Prepare messages with context
-  const messages = [...chatContext, { role: 'user', content: message }];
-  
-  const response = await fetch(`${apiBase}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'Authorization': `Bearer ${apiKey}`
-    },
-    body: JSON.stringify({
-      model: model,
-      messages: messages,
-      stream: true
-    })
-  });
-  
-  if (!response.ok) {
-    throw new Error(`HTTP error! status: ${response.status}`);
-  }
-  
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder('utf-8');
-  let fullText = '';
-  
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    
-    const chunk = decoder.decode(value);
-    const lines = chunk.split('\n').filter(line => line.trim() !== '');
-    
-    for (const line of lines) {
-      if (line.startsWith('data: ')) {
-        const data = line.substring(6);
-        
-        if (data === '[DONE]') {
-          return fullText;
-        }
-        
-        try {
-          const parsed = JSON.parse(data);
-          const content = parsed.choices[0].delta.content;
-          
-          if (content) {
-            fullText += content;
-            // Remove loading dots when we start receiving content
-            if (onTextUpdate) {
-              onTextUpdate(fullText);
-            }
-          }
-        } catch (e) {
-          // Ignore parsing errors
-        }
-      }
-    }
-  }
-  
-  // Remove loading dots when done
-  const loadingDots = document.querySelector('.loading-dots');
-  if (loadingDots) {
-    loadingDots.remove();
-  }
-  
-  return fullText;
-}
-
-async function fetchAIModels() {
-  const apiBase = apiBaseInput.value;
-  const apiKey = apiKeyInput.value;
-  
-  if (!apiBase || !apiKey) {
-    showError('Por favor ingresa la API base y API key');
-    return;
-  }
-  
-  try {
-    showProgress('Cargando modelos de IA...');
-    
-    const response = await fetch(`${apiBase}/models`, {
-      headers: {
-        'Authorization': `Bearer ${apiKey}`
-      }
-    });
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! status: ${response.status}`);
-    }
-    
-    const data = await response.json();
-    
-    // Clear existing options
-    aiModelSelector.innerHTML = '';
-    
-    // Add models to selector
-    data.data.forEach(model => {
-      const option = document.createElement('option');
-      option.value = model.id;
-      option.textContent = model.id;
-      aiModelSelector.appendChild(option);
-    });
-    
-    showSuccess(`Modelos cargados: ${data.data.length}`);
-  } catch (error) {
-    console.error('Error fetching AI models:', error);
-    showError('Error al cargar modelos de IA: ' + error.message);
-  } finally {
-    hideProgress();
-  }
-}
-
-function loadAISettings() {
-  const savedApiBase = localStorage.getItem('ai-api-base');
-  const savedApiKey = localStorage.getItem('ai-api-key');
-  const savedModel = localStorage.getItem('ai-selected-model');
-  
-  if (savedApiBase) apiBaseInput.value = savedApiBase;
-  if (savedApiKey) apiKeyInput.value = savedApiKey;
-  if (savedModel) aiModelSelector.value = savedModel;
-}
-
-function loadChatContext() {
-  const savedContext = localStorage.getItem('chat-context');
-  if (savedContext) {
-    try {
-      chatContext = JSON.parse(savedContext);
-    } catch (e) {
-      chatContext = [];
-    }
-  }
-}
-
-function saveChatContext() {
-  localStorage.setItem('chat-context', JSON.stringify(chatContext));
-}
-
-function saveAISettings() {
-  localStorage.setItem('ai-api-base', apiBaseInput.value);
-  localStorage.setItem('ai-api-key', apiKeyInput.value);
-  localStorage.setItem('ai-selected-model', aiModelSelector.value);
 }
 
 function autoResizeTextarea() {
   textInput.style.height = 'auto';
-  textInput.style.height = Math.min(textInput.scrollHeight, 300) + 'px';
+  textInput.style.height = `${textInput.scrollHeight}px`;
 }
 
 function saveTextToStorage() {
   localStorage.setItem('tts-text', textInput.value);
-  saveAISettings();
-  saveChatContext();
 }
 
 async function loadModels() {

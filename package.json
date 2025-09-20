@@ -6,7 +6,7 @@
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "build": "electron-builder --win --x64",
+    "build": "electron-builder --win --x64 --publish=never",
     "build-all": "electron-builder --win --linux --mac",
     "dist": "electron-builder --publish=never",
     "pack": "electron-builder --dir"
@@ -54,10 +54,6 @@
       {
         "from": "ffmpeg.exe",
         "to": "ffmpeg.exe"
-      },
-      {
-        "from": "ffplay.exe",
-        "to": "ffplay.exe"
       },
       {
         "from": "ffprobe.exe",

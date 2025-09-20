@@ -39,25 +39,33 @@ jobs:
         $version = "${{ steps.get_version.outputs.VERSION }}"
         $distPath = "dist"
         
+        # List all files in dist directory first
+        echo "Files in dist directory before renaming:"
+        Get-ChildItem $distPath -Name
+        
         # Rename portable executable
-        $portableOld = "$distPath\TTS Electron-1.0.0-portable.exe"
-        $portableNew = "$distPath\TTS Electron-$version-portable.exe"
-        if (Test-Path "$portableOld") {
-          Rename-Item "$portableOld" "$portableNew"
-          echo "Renamed portable: $portableNew"
+        $portableOld = Join-Path $distPath "TTS Electron-1.0.0-portable.exe"
+        $portableNew = Join-Path $distPath "TTS Electron-$version-portable.exe"
+        if (Test-Path $portableOld) {
+          Move-Item -Path $portableOld -Destination $portableNew -Force
+          echo "Renamed portable: $(Split-Path $portableNew -Leaf)"
+        } else {
+          echo "Portable file not found: $portableOld"
         }
         
         # Rename x64 executable
-        $x64Old = "$distPath\TTS Electron-1.0.0-x64.exe"
-        $x64New = "$distPath\TTS Electron-$version-x64.exe"
-        if (Test-Path "$x64Old") {
-          Rename-Item "$x64Old" "$x64New"
-          echo "Renamed x64: $x64New"
+        $x64Old = Join-Path $distPath "TTS Electron-1.0.0-x64.exe"
+        $x64New = Join-Path $distPath "TTS Electron-$version-x64.exe"
+        if (Test-Path $x64Old) {
+          Move-Item -Path $x64Old -Destination $x64New -Force
+          echo "Renamed x64: $(Split-Path $x64New -Leaf)"
+        } else {
+          echo "x64 file not found: $x64Old"
         }
         
-        # List all files in dist directory for verification
-        echo "Files in dist directory:"
-        Get-ChildItem "$distPath" -Name
+        # List all files in dist directory after renaming
+        echo "Files in dist directory after renaming:"
+        Get-ChildItem $distPath -Name
         
     - name: Upload portable executable to release
       uses: actions/upload-release-asset@v1

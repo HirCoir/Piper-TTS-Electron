@@ -1,4 +1,4 @@
-name: Build and Release Piper TTS Electron App
+name: Build and Release Electron App
 
 on:
   workflow_dispatch:
@@ -22,6 +22,7 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '18'
+        cache: 'npm'
 
     - name: Get version from release
       id: version
@@ -44,7 +45,7 @@ jobs:
         echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
 
     - name: Install dependencies
-      run: npm install
+      run: npm ci
 
     - name: Update version in package.json
       run: |
@@ -58,58 +59,22 @@ jobs:
         echo "Updated version:"
         grep '"version":' package.json
 
-    - name: Verify required files exist
+    - name: Create icon file if missing
       run: |
-        echo "Checking for required files..."
-        
-        # Check for icon file
         if [ ! -f "assets/icon.ico" ]; then
-          echo "Warning: assets/icon.ico not found"
           mkdir -p assets
-          # Create a placeholder icon if ImageMagick is available
-          convert -size 256x256 xc:transparent assets/icon.ico 2>/dev/null || echo "Could not create placeholder icon"
-        else
-          echo "Icon file found: assets/icon.ico"
+          convert -size 256x256 xc:transparent assets/icon.ico || echo "Warning: Could not create icon file"
         fi
-        
-        # Check for piper directory
-        if [ ! -d "piper" ]; then
-          echo "Warning: piper directory not found - this may cause build issues"
-        else
-          echo "Piper directory found"
-        fi
-        
-        # Check for other required files
-        for file in voices.json; do
-          if [ ! -f "$file" ]; then
-            echo "Warning: $file not found"
-          else
-            echo "Found: $file"
-          fi
-        done
 
     - name: Build Windows executable
       run: |
-        echo "Building TTS Electron for Windows..."
         npx electron-builder --win --x64 --publish=never
-
-    - name: List build outputs
-      run: |
-        echo "Build completed. Listing dist directory contents:"
-        ls -la dist/ || echo "No dist directory found"
-        
-        echo "Looking for executables and installers:"
-        find dist/ -name "*.exe" -o -name "*.msi" -o -name "*.zip" 2>/dev/null || echo "No executables found"
 
     - name: Package unpacked folder
       run: |
         cd dist && \
         if [ -d "win-unpacked" ]; then
-          echo "Packaging unpacked folder..."
           tar -czf tts-electron_unpacked.tar.gz win-unpacked/
-          echo "Unpacked folder packaged successfully"
-        else
-          echo "No win-unpacked folder found"
         fi
 
     - name: Upload to release
@@ -117,31 +82,17 @@ jobs:
       env:
         GH_TOKEN: ${{ github.token }}
       run: |
-        echo "Uploading release artifacts..."
-        
-        # Upload all executable files (installers and portable versions)
-        for file in dist/*.exe; do
-          if [ -f "$file" ]; then
-            echo "Uploading: $file"
-            gh release upload ${{ github.event.release.tag_name }} "$file" --clobber --repo ${{ github.repository }}
-          fi
-        done
-        
-        # Upload MSI installers if they exist
-        for file in dist/*.msi; do
-          if [ -f "$file" ]; then
-            echo "Uploading: $file"
-            gh release upload ${{ github.event.release.tag_name }} "$file" --clobber --repo ${{ github.repository }}
+        # Upload portable executable(s) without compression
+        for exe in dist/*.exe; do
+          if [ -f "$exe" ]; then
+            gh release upload ${{ github.event.release.tag_name }} "$exe" --clobber --repo ${{ github.repository }}
           fi
         done
         
         # Upload unpacked folder if it exists
         if [ -f "dist/tts-electron_unpacked.tar.gz" ]; then
-          echo "Uploading unpacked folder..."
           gh release upload ${{ github.event.release.tag_name }} dist/tts-electron_unpacked.tar.gz --clobber --repo ${{ github.repository }}
         fi
-        
-        echo "Upload completed"
 
     - name: Cleanup build artifacts
       if: always()

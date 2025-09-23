@@ -140,36 +140,42 @@ jobs:
       run: |
         echo "Initializing Wine environment..."
 
+        # Ensure winetricks is installed on your runner
+        # On Debian/Ubuntu: sudo apt-get update && sudo apt-get install -y winetricks
+        
         # Clean up any previous Wine prefix to ensure a fresh start
         echo "Removing old WINEPREFIX if it exists..."
         rm -rf "${{ env.WINEPREFIX }}"
-        
-        # Create Wine prefix directory
         mkdir -p "${{ env.WINEPREFIX }}"
         
         # Kill any existing Xvfb processes
         pkill Xvfb || true
         
-        # Start Xvfb and wait for it to be ready
+        # Start Xvfb
         echo "Starting Xvfb..."
         export DISPLAY=:99
         Xvfb :99 -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
         XVFB_PID=$!
-        sleep 5 # Increased sleep time
+        sleep 5
         
-        # Verify Xvfb is running
         if ! ps -p $XVFB_PID > /dev/null; then
           echo "Failed to start Xvfb"
           exit 1
         fi
         echo "Xvfb started successfully with PID: $XVFB_PID"
         
-        # Initialize Wine. This can take some time.
-        echo "Initializing Wine with prefix: ${{ env.WINEPREFIX }}"
-        # The timeout command prevents this step from hanging indefinitely (e.g., for 120 seconds)
-        timeout 120 wineboot --init
+        # Enable debug logs for key components to see where it hangs
+        export WINEDEBUG=warn+rpc,warn+ole
+
+        # Initialize Wine with a much longer timeout (e.g., 300 seconds = 5 minutes)
+        echo "Initializing Wine with prefix (timeout 300s): ${{ env.WINEPREFIX }}"
+        timeout 300 wineboot --init
         
-        # Verify Wine installation again after init
+        # Use winetricks to install common core components. The -q flag is for quiet mode.
+        # This often solves issues with applications expecting these to exist.
+        echo "Running winetricks to install core components..."
+        timeout 300 winetricks -q corefonts vcrun2019
+        
         echo "Verifying Wine version after initialization..."
         wine --version
         echo "Wine environment initialized successfully"

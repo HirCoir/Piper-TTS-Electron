@@ -141,4 +141,3 @@ $RECYCLE.BIN/
 # Mac crap
 .DS_Store
 versiones/
-package-lock.json

@@ -1,9 +1,15 @@
-name: Build and Release Electron App
+name: Build and Release Piper TTS Electron
 
 on:
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
-  release:
-    types: [published]
+    inputs:
+      version:
+        description: 'Version tag (e.g., v1.0.0)'
+        required: true
+        default: 'v1.0.0'
 
 permissions:
   contents: write
@@ -22,92 +28,360 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '18'
+        cache: 'npm'
 
-    - name: Get version from release
+    - name: Get version from tag or input
       id: version
       run: |
-        if [ "${{ github.event_name }}" = "release" ]; then
-          VERSION="${{ github.event.release.tag_name }}"
+        if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          VERSION="${{ github.event.inputs.version }}"
         else
-          VERSION="v1.0.0"  # Default for manual dispatch
+          VERSION="${GITHUB_REF#refs/tags/}"
         fi
-        
-        # Extract version number and ensure it's in x.y.z format
-        VERSION_NUMBER=${VERSION#v}
-        
-        # If version is only x.y, add .0 to make it x.y.z
-        if [[ $VERSION_NUMBER =~ ^[0-9]+\.[0-9]+$ ]]; then
-          VERSION_NUMBER="${VERSION_NUMBER}.0"
-        fi
-        
         echo "version=$VERSION" >> $GITHUB_OUTPUT
-        echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
+        echo "version_number=${VERSION#v}" >> $GITHUB_OUTPUT
+
+    - name: Check if release already exists
+      id: check_release
+      run: |
+        RELEASE_EXISTS=$(curl -s -o /dev/null -w "%{http_code}" \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.version.outputs.version }}")
+        
+        if [ "$RELEASE_EXISTS" = "200" ]; then
+          echo "Release ${{ steps.version.outputs.version }} already exists"
+          echo "exists=true" >> $GITHUB_OUTPUT
+          
+          # Check if Windows executable already exists in the release
+          ASSETS=$(curl -s \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.version.outputs.version }}" | \
+            jq -r '.assets[].name')
+          
+          if echo "$ASSETS" | grep -q "TTS-Electron.*\.exe\|.*Setup.*\.exe\|.*portable.*\.exe"; then
+            echo "Windows executable already exists in release"
+            echo "exe_exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exe_exists=false" >> $GITHUB_OUTPUT
+          fi
+        else
+          echo "exists=false" >> $GITHUB_OUTPUT
+          echo "exe_exists=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Exit if executable already exists
+      if: steps.check_release.outputs.exe_exists == 'true'
+      run: |
+        echo "Windows executable already exists in release ${{ steps.version.outputs.version }}. Exiting."
+        exit 0
+
+    - name: Verify Wine installation
+      if: steps.check_release.outputs.exe_exists == 'false'
+      run: |
+        echo "Verifying Wine installation..."
+        wine --version
 
     - name: Install dependencies
-      run: npm install
+      if: steps.check_release.outputs.exe_exists == 'false'
+      run: npm ci
 
     - name: Update version in package.json
+      if: steps.check_release.outputs.exe_exists == 'false'
       run: |
-        TARGET_VERSION="${{ steps.version.outputs.version_number }}"
-        echo "Setting version to: $TARGET_VERSION"
-        
-        # Use sed to directly update the version in package.json
-        sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$TARGET_VERSION\"/" package.json
-        
-        # Verify the change
-        echo "Updated version:"
-        grep '"version":' package.json
+        npm version ${{ steps.version.outputs.version_number }} --no-git-tag-version
 
-    - name: Create missing files
+    - name: Verify required files exist
+      if: steps.check_release.outputs.exe_exists == 'false'
       run: |
-        # Create icon file if missing
+        echo "Checking required files..."
+        ls -la
+        
+        # Check for icon file
         if [ ! -f "assets/icon.ico" ]; then
+          echo "Warning: assets/icon.ico not found, creating placeholder"
           mkdir -p assets
-          convert -size 256x256 xc:transparent assets/icon.ico || echo "Warning: Could not create icon file"
+          # Create a minimal ICO file (placeholder)
+          echo -e "\x00\x00\x01\x00\x01\x00\x10\x10\x00\x00\x01\x00\x20\x00\x68\x04\x00\x00\x16\x00\x00\x00" > assets/icon.ico
         fi
         
-        # Create voices.json if missing
-        if [ ! -f "voices.json" ]; then
-          echo '{}' > voices.json
+        # Check for piper directory
+        if [ ! -d "piper" ]; then
+          echo "Warning: piper directory not found"
+        else
+          echo "Piper directory contents:"
+          ls -la piper/
         fi
-
-    - name: Build Windows executable
-      env:
-        CSC_IDENTITY_AUTO_DISCOVERY: false
-      run: |
-        npx electron-builder --win --x64 --publish=never
-
-    - name: Package unpacked folder
-      run: |
-        cd dist && \
-        if [ -d "win-unpacked" ]; then
-          tar -czf tts-electron_unpacked.tar.gz win-unpacked/
-        fi
-
-    - name: Upload to release
-      if: github.event_name == 'release'
-      env:
-        GH_TOKEN: ${{ github.token }}
-      run: |
-        # Upload portable executable(s) without compression
-        for exe in dist/*.exe; do
-          if [ -f "$exe" ]; then
-            gh release upload ${{ github.event.release.tag_name }} "$exe" --clobber --repo ${{ github.repository }}
+        
+        # Check for FFmpeg files
+        for file in ffmpeg.exe ffplay.exe ffprobe.exe; do
+          if [ ! -f "$file" ]; then
+            echo "Warning: $file not found"
+          else
+            echo "Found: $file ($(stat -c%s $file) bytes)"
           fi
         done
+
+    - name: Initialize Wine environment
+      if: steps.check_release.outputs.exe_exists == 'false'
+      env:
+        WINEARCH: win64
+        WINEPREFIX: /tmp/wine64
+      run: |
+        echo "Initializing Wine environment..."
+        export DISPLAY=:99
+        Xvfb :99 -screen 0 1024x768x16 &
+        sleep 2
+        wineboot --init
+        sleep 5
+
+    - name: Build Windows executable
+      if: steps.check_release.outputs.exe_exists == 'false'
+      env:
+        WINEARCH: win64
+        WINEPREFIX: /tmp/wine64
+        DISPLAY: :99
+        CSC_IDENTITY_AUTO_DISCOVERY: false
+      run: |
+        echo "Building Windows executable with electron-builder..."
         
-        # Upload unpacked folder if it exists
-        if [ -f "dist/tts-electron_unpacked.tar.gz" ]; then
-          gh release upload ${{ github.event.release.tag_name }} dist/tts-electron_unpacked.tar.gz --clobber --repo ${{ github.repository }}
+        # Set environment for cross-compilation
+        export npm_config_target_platform=win32
+        export npm_config_target_arch=x64
+        export npm_config_disturl=https://electronjs.org/headers
+        export npm_config_runtime=electron
+        export npm_config_cache=/tmp/.npm
+        export npm_config_build_from_source=true
+        
+        # Build for Windows
+        npm run build
+        
+        # List built files
+        echo "Built files in dist/:"
+        find dist/ -type f -name "*.exe" -o -name "*.msi" -o -name "*.zip" | head -20
+
+    - name: Find Windows executables
+      if: steps.check_release.outputs.exe_exists == 'false'
+      id: find_exe
+      run: |
+        echo "Searching for Windows executables..."
+        
+        # Find setup executable (installer)
+        SETUP_EXE=$(find dist/ -name "*Setup*.exe" -o -name "*setup*.exe" | head -1)
+        
+        # Find portable executable
+        PORTABLE_EXE=$(find dist/ -name "*portable*.exe" -o -name "*Portable*.exe" | head -1)
+        
+        # Find any other exe files
+        OTHER_EXE=$(find dist/ -name "*.exe" | grep -v -i "setup\|portable\|uninstall" | head -1)
+        
+        if [ -n "$SETUP_EXE" ]; then
+          echo "Found setup executable: $SETUP_EXE"
+          echo "setup_exe_path=$SETUP_EXE" >> $GITHUB_OUTPUT
+          echo "setup_exe_size=$(stat -c%s "$SETUP_EXE")" >> $GITHUB_OUTPUT
+          echo "has_setup=true" >> $GITHUB_OUTPUT
+        else
+          echo "has_setup=false" >> $GITHUB_OUTPUT
+        fi
+        
+        if [ -n "$PORTABLE_EXE" ]; then
+          echo "Found portable executable: $PORTABLE_EXE"
+          echo "portable_exe_path=$PORTABLE_EXE" >> $GITHUB_OUTPUT
+          echo "portable_exe_size=$(stat -c%s "$PORTABLE_EXE")" >> $GITHUB_OUTPUT
+          echo "has_portable=true" >> $GITHUB_OUTPUT
+        else
+          echo "has_portable=false" >> $GITHUB_OUTPUT
+        fi
+        
+        if [ -n "$OTHER_EXE" ]; then
+          echo "Found other executable: $OTHER_EXE"
+          echo "other_exe_path=$OTHER_EXE" >> $GITHUB_OUTPUT
+          echo "other_exe_size=$(stat -c%s "$OTHER_EXE")" >> $GITHUB_OUTPUT
+          echo "has_other=true" >> $GITHUB_OUTPUT
+        else
+          echo "has_other=false" >> $GITHUB_OUTPUT
+        fi
+        
+        # Check if we found at least one executable
+        if [ -z "$SETUP_EXE" ] && [ -z "$PORTABLE_EXE" ] && [ -z "$OTHER_EXE" ]; then
+          echo "ERROR: No Windows executable files found!"
+          echo "Contents of dist directory:"
+          find dist/ -type f | head -20
+          exit 1
         fi
 
-    - name: Cleanup build artifacts
+    - name: Create release if it doesn't exist
+      if: steps.check_release.outputs.exists == 'false'
+      id: create_release
+      uses: actions/create-release@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        tag_name: ${{ steps.version.outputs.version }}
+        release_name: Piper TTS Electron ${{ steps.version.outputs.version }}
+        body: |
+          ## Piper TTS Electron ${{ steps.version.outputs.version }}
+          
+          ### 🎙️ Características
+          - ✅ Aplicación de escritorio para síntesis de voz con Piper TTS
+          - ✅ Soporte para modelos ONNX de alta calidad
+          - ✅ Interfaz moderna y fácil de usar
+          - ✅ Procesamiento paralelo para mejor rendimiento
+          - ✅ Soporte para múltiples idiomas y voces
+          
+          ### 📦 Archivos Disponibles
+          - **Setup**: Instalador completo con todas las dependencias
+          - **Portable**: Versión portable que no requiere instalación
+          
+          ### 🚀 Instalación
+          
+          #### Instalador (Recomendado)
+          1. Descarga el archivo `TTS-Electron-Setup-${{ steps.version.outputs.version_number }}.exe`
+          2. Ejecuta el instalador como administrador
+          3. Sigue las instrucciones en pantalla
+          4. La aplicación se instalará con todos los componentes necesarios
+          
+          #### Versión Portable
+          1. Descarga el archivo `TTS-Electron-${{ steps.version.outputs.version_number }}-portable.exe`
+          2. Ejecuta directamente sin instalación
+          3. Todos los archivos se mantienen en la carpeta de la aplicación
+          
+          ### 💻 Requisitos del Sistema
+          - Windows 10 o superior (64-bit)
+          - 2 GB de RAM mínimo (4 GB recomendado)
+          - 500 MB de espacio libre en disco
+          - Tarjeta de sonido compatible
+          
+          ### 🎯 Uso
+          1. Abre la aplicación
+          2. Selecciona la carpeta con tus modelos Piper TTS
+          3. Elige el modelo de voz deseado
+          4. Escribe o pega el texto a convertir
+          5. Ajusta la configuración de audio si es necesario
+          6. Haz clic en "Generar Audio"
+          
+          ### 🔧 Modelos TTS
+          Esta aplicación requiere modelos Piper TTS en formato ONNX. Puedes descargar modelos desde:
+          - [Repositorio oficial de Piper](https://github.com/rhasspy/piper)
+          - [Hugging Face - Modelos Piper](https://huggingface.co/rhasspy/piper-voices)
+          
+          ### 📝 Notas de la Versión
+          - Mejoras en el rendimiento de síntesis
+          - Correcciones de errores menores
+          - Interfaz optimizada
+          
+          ---
+          
+          **Construido automáticamente el:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")  
+          **Commit:** ${{ github.sha }}  
+          **Plataforma:** Windows x64
+        draft: false
+        prerelease: false
+
+    - name: Get release upload URL
+      if: steps.check_release.outputs.exe_exists == 'false'
+      id: get_upload_url
+      run: |
+        if [ "${{ steps.check_release.outputs.exists }}" = "true" ]; then
+          # Get existing release upload URL
+          UPLOAD_URL=$(curl -s \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.version.outputs.version }}" | \
+            jq -r '.upload_url')
+        else
+          # Use newly created release upload URL
+          UPLOAD_URL="${{ steps.create_release.outputs.upload_url }}"
+        fi
+        echo "upload_url=$UPLOAD_URL" >> $GITHUB_OUTPUT
+
+    - name: Upload Setup executable
+      if: steps.check_release.outputs.exe_exists == 'false' && steps.find_exe.outputs.has_setup == 'true'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
+        asset_path: ${{ steps.find_exe.outputs.setup_exe_path }}
+        asset_name: TTS-Electron-Setup-${{ steps.version.outputs.version_number }}.exe
+        asset_content_type: application/octet-stream
+
+    - name: Upload Portable executable
+      if: steps.check_release.outputs.exe_exists == 'false' && steps.find_exe.outputs.has_portable == 'true'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
+        asset_path: ${{ steps.find_exe.outputs.portable_exe_path }}
+        asset_name: TTS-Electron-${{ steps.version.outputs.version_number }}-portable.exe
+        asset_content_type: application/octet-stream
+
+    - name: Upload other executable (if no setup/portable found)
+      if: steps.check_release.outputs.exe_exists == 'false' && steps.find_exe.outputs.has_other == 'true' && steps.find_exe.outputs.has_setup == 'false' && steps.find_exe.outputs.has_portable == 'false'
+      uses: actions/upload-release-asset@v1
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      with:
+        upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
+        asset_path: ${{ steps.find_exe.outputs.other_exe_path }}
+        asset_name: TTS-Electron-${{ steps.version.outputs.version_number }}.exe
+        asset_content_type: application/octet-stream
+
+    - name: Create build summary
+      if: steps.check_release.outputs.exe_exists == 'false'
+      run: |
+        echo "## 🎉 Build Summary" >> $GITHUB_STEP_SUMMARY
+        echo "- **Version:** ${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Application:** Piper TTS Electron" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "### 📦 Generated Files:" >> $GITHUB_STEP_SUMMARY
+        
+        if [ "${{ steps.find_exe.outputs.has_setup }}" = "true" ]; then
+          echo "- ✅ **Setup Installer:** TTS-Electron-Setup-${{ steps.version.outputs.version_number }}.exe (${{ steps.find_exe.outputs.setup_exe_size }} bytes)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ steps.find_exe.outputs.has_portable }}" = "true" ]; then
+          echo "- ✅ **Portable Version:** TTS-Electron-${{ steps.version.outputs.version_number }}-portable.exe (${{ steps.find_exe.outputs.portable_exe_size }} bytes)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        if [ "${{ steps.find_exe.outputs.has_other }}" = "true" ] && [ "${{ steps.find_exe.outputs.has_setup }}" = "false" ] && [ "${{ steps.find_exe.outputs.has_portable }}" = "false" ]; then
+          echo "- ✅ **Executable:** TTS-Electron-${{ steps.version.outputs.version_number }}.exe (${{ steps.find_exe.outputs.other_exe_size }} bytes)" >> $GITHUB_STEP_SUMMARY
+        fi
+        
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "- **Release URL:** https://github.com/${{ github.repository }}/releases/tag/${{ steps.version.outputs.version }}" >> $GITHUB_STEP_SUMMARY
+        echo "- **Target Platform:** Windows x64" >> $GITHUB_STEP_SUMMARY
+        echo "- **Build Tool:** Electron Builder with Wine" >> $GITHUB_STEP_SUMMARY
+        echo "" >> $GITHUB_STEP_SUMMARY
+        echo "🎙️ **Ready for TTS magic!** ✨" >> $GITHUB_STEP_SUMMARY
+
+    - name: Cleanup
       if: always()
       run: |
-        echo "Cleaning up build artifacts..."
+        echo "Cleaning up build artifacts and temporary files..."
+        
+        # Clean up build artifacts to save space
         rm -rf dist/ || true
-        rm -rf node_modules/.cache/ || true
-        rm -rf ~/.cache/electron/ || true
-        rm -rf ~/.cache/electron-builder/ || true
-        rm -rf /tmp/electron-* || true
-        echo "Cleanup completed - runner is clean for next job"
+        rm -rf node_modules/.cache || true
+        rm -rf /tmp/wine64 || true
+        
+        # Kill any remaining Xvfb processes
+        pkill Xvfb || true
+        
+        echo "Cleanup completed"
+
+  notify-completion:
+    needs: build-and-release
+    runs-on: [self-hosted, linux]
+    if: always()
+    steps:
+    - name: Notify build completion
+      run: |
+        if [ "${{ needs.build-and-release.result }}" = "success" ]; then
+          echo "🎉 Piper TTS Electron build and release completed successfully!"
+          echo "🎙️ Ready to synthesize speech with the latest version!"
+        elif [ "${{ needs.build-and-release.result }}" = "skipped" ]; then
+          echo "⏭️ Build was skipped (executable already exists in release)"
+        else
+          echo "❌ Build failed or encountered an error"
+          echo "Check the logs above for details"
+        fi

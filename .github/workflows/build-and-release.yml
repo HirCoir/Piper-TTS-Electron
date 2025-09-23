@@ -22,7 +22,6 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '18'
-        cache: 'npm'
 
     - name: Get version from release
       id: version
@@ -61,8 +60,9 @@ jobs:
 
     - name: Create icon file if missing
       run: |
-        if [ ! -f "icon.ico" ]; then
-          convert -size 256x256 xc:transparent icon.ico || echo "Warning: Could not create icon file"
+        if [ ! -f "assets/icon.ico" ]; then
+          mkdir -p assets
+          convert -size 256x256 xc:transparent assets/icon.ico || echo "Warning: Could not create icon file"
         fi
 
     - name: Build Windows executable
@@ -73,7 +73,7 @@ jobs:
       run: |
         cd dist && \
         if [ -d "win-unpacked" ]; then
-          tar -czf control-versiones-electron_unpacked.tar.gz win-unpacked/
+          tar -czf tts-electron_unpacked.tar.gz win-unpacked/
         fi
 
     - name: Upload to release
@@ -89,8 +89,8 @@ jobs:
         done
         
         # Upload unpacked folder if it exists
-        if [ -f "dist/control-versiones-electron_unpacked.tar.gz" ]; then
-          gh release upload ${{ github.event.release.tag_name }} dist/control-versiones-electron_unpacked.tar.gz --clobber --repo ${{ github.repository }}
+        if [ -f "dist/tts-electron_unpacked.tar.gz" ]; then
+          gh release upload ${{ github.event.release.tag_name }} dist/tts-electron_unpacked.tar.gz --clobber --repo ${{ github.repository }}
         fi
 
     - name: Cleanup build artifacts

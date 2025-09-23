@@ -139,35 +139,38 @@ jobs:
         WINEPREFIX: ${{ runner.temp }}/wine64
       run: |
         echo "Initializing Wine environment..."
+
+        # Clean up any previous Wine prefix to ensure a fresh start
+        echo "Removing old WINEPREFIX if it exists..."
+        rm -rf "${{ env.WINEPREFIX }}"
         
-        # Create Wine prefix directory with proper permissions
-        mkdir -p "${{ runner.temp }}/wine64"
-        chmod 755 "${{ runner.temp }}/wine64"
+        # Create Wine prefix directory
+        mkdir -p "${{ env.WINEPREFIX }}"
         
         # Kill any existing Xvfb processes
         pkill Xvfb || true
-        sleep 1
         
-        # Start Xvfb with proper permissions
+        # Start Xvfb and wait for it to be ready
+        echo "Starting Xvfb..."
         export DISPLAY=:99
         Xvfb :99 -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
         XVFB_PID=$!
-        sleep 3
+        sleep 5 # Increased sleep time
         
         # Verify Xvfb is running
         if ! ps -p $XVFB_PID > /dev/null; then
           echo "Failed to start Xvfb"
           exit 1
         fi
+        echo "Xvfb started successfully with PID: $XVFB_PID"
         
-        echo "Xvfb started with PID: $XVFB_PID"
+        # Initialize Wine. This can take some time.
+        echo "Initializing Wine with prefix: ${{ env.WINEPREFIX }}"
+        # The timeout command prevents this step from hanging indefinitely (e.g., for 120 seconds)
+        timeout 120 wineboot --init
         
-        # Initialize Wine
-        echo "Initializing Wine with prefix: ${{ runner.temp }}/wine64"
-        wineboot --init
-        sleep 5
-        
-        # Verify Wine installation
+        # Verify Wine installation again after init
+        echo "Verifying Wine version after initialization..."
         wine --version
         echo "Wine environment initialized successfully"
 

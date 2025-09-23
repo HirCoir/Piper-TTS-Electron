@@ -88,7 +88,18 @@ jobs:
     - name: Update version in package.json
       if: steps.check_release.outputs.exe_exists == 'false'
       run: |
-        npm version ${{ steps.version.outputs.version_number }} --no-git-tag-version
+        TARGET_VERSION="${{ steps.version.outputs.version_number }}"
+        CURRENT_VERSION=$(node -p "require('./package.json').version")
+        
+        echo "Current version: $CURRENT_VERSION"
+        echo "Target version: $TARGET_VERSION"
+        
+        if [ "$CURRENT_VERSION" != "$TARGET_VERSION" ]; then
+          echo "Updating version from $CURRENT_VERSION to $TARGET_VERSION"
+          npm version $TARGET_VERSION --no-git-tag-version
+        else
+          echo "Version is already $TARGET_VERSION, no update needed"
+        fi
 
     - name: Verify required files exist
       if: steps.check_release.outputs.exe_exists == 'false'
@@ -209,89 +220,126 @@ jobs:
           exit 1
         fi
 
-    - name: Create release if it doesn't exist
-      if: steps.check_release.outputs.exists == 'false'
-      id: create_release
-      uses: actions/create-release@v1
-      env:
-        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      with:
-        tag_name: ${{ steps.version.outputs.version }}
-        release_name: Piper TTS Electron ${{ steps.version.outputs.version }}
-        body: |
-          ## Piper TTS Electron ${{ steps.version.outputs.version }}
-          
-          ### 🎙️ Características
-          - ✅ Aplicación de escritorio para síntesis de voz con Piper TTS
-          - ✅ Soporte para modelos ONNX de alta calidad
-          - ✅ Interfaz moderna y fácil de usar
-          - ✅ Procesamiento paralelo para mejor rendimiento
-          - ✅ Soporte para múltiples idiomas y voces
-          
-          ### 📦 Archivos Disponibles
-          - **Setup**: Instalador completo con todas las dependencias
-          - **Portable**: Versión portable que no requiere instalación
-          
-          ### 🚀 Instalación
-          
-          #### Instalador (Recomendado)
-          1. Descarga el archivo `TTS-Electron-Setup-${{ steps.version.outputs.version_number }}.exe`
-          2. Ejecuta el instalador como administrador
-          3. Sigue las instrucciones en pantalla
-          4. La aplicación se instalará con todos los componentes necesarios
-          
-          #### Versión Portable
-          1. Descarga el archivo `TTS-Electron-${{ steps.version.outputs.version_number }}-portable.exe`
-          2. Ejecuta directamente sin instalación
-          3. Todos los archivos se mantienen en la carpeta de la aplicación
-          
-          ### 💻 Requisitos del Sistema
-          - Windows 10 o superior (64-bit)
-          - 2 GB de RAM mínimo (4 GB recomendado)
-          - 500 MB de espacio libre en disco
-          - Tarjeta de sonido compatible
-          
-          ### 🎯 Uso
-          1. Abre la aplicación
-          2. Selecciona la carpeta con tus modelos Piper TTS
-          3. Elige el modelo de voz deseado
-          4. Escribe o pega el texto a convertir
-          5. Ajusta la configuración de audio si es necesario
-          6. Haz clic en "Generar Audio"
-          
-          ### 🔧 Modelos TTS
-          Esta aplicación requiere modelos Piper TTS en formato ONNX. Puedes descargar modelos desde:
-          - [Repositorio oficial de Piper](https://github.com/rhasspy/piper)
-          - [Hugging Face - Modelos Piper](https://huggingface.co/rhasspy/piper-voices)
-          
-          ### 📝 Notas de la Versión
-          - Mejoras en el rendimiento de síntesis
-          - Correcciones de errores menores
-          - Interfaz optimizada
-          
-          ---
-          
-          **Construido automáticamente el:** $(date -u +"%Y-%m-%d %H:%M:%S UTC")  
-          **Commit:** ${{ github.sha }}  
-          **Plataforma:** Windows x64
-        draft: false
-        prerelease: false
-
-    - name: Get release upload URL
+    - name: Create or get release
       if: steps.check_release.outputs.exe_exists == 'false'
-      id: get_upload_url
+      id: create_release
       run: |
-        if [ "${{ steps.check_release.outputs.exists }}" = "true" ]; then
-          # Get existing release upload URL
-          UPLOAD_URL=$(curl -s \
-            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
-            "https://api.github.com/repos/${{ github.repository }}/releases/tags/${{ steps.version.outputs.version }}" | \
-            jq -r '.upload_url')
+        VERSION_TAG="${{ steps.version.outputs.version }}"
+        VERSION_NUM="${{ steps.version.outputs.version_number }}"
+        
+        echo "Checking if release $VERSION_TAG exists..."
+        
+        # Check if release exists (including drafts)
+        RELEASE_DATA=$(curl -s \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          "https://api.github.com/repos/${{ github.repository }}/releases/tags/$VERSION_TAG" 2>/dev/null)
+        
+        if echo "$RELEASE_DATA" | grep -q '"id"'; then
+          echo "Release $VERSION_TAG already exists"
+          RELEASE_ID=$(echo "$RELEASE_DATA" | jq -r '.id')
+          UPLOAD_URL=$(echo "$RELEASE_DATA" | jq -r '.upload_url')
+          echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+          echo "upload_url=$UPLOAD_URL" >> $GITHUB_OUTPUT
+          echo "created_new=false" >> $GITHUB_OUTPUT
         else
-          # Use newly created release upload URL
-          UPLOAD_URL="${{ steps.create_release.outputs.upload_url }}"
+          echo "Creating new draft release $VERSION_TAG..."
+          
+          # Create release body
+          RELEASE_BODY="## Piper TTS Electron $VERSION_TAG
+
+### 🎙️ Características
+- ✅ Aplicación de escritorio para síntesis de voz con Piper TTS
+- ✅ Soporte para modelos ONNX de alta calidad
+- ✅ Interfaz moderna y fácil de usar
+- ✅ Procesamiento paralelo para mejor rendimiento
+- ✅ Soporte para múltiples idiomas y voces
+
+### 📦 Archivos Disponibles
+- **Setup**: Instalador completo con todas las dependencias
+- **Portable**: Versión portable que no requiere instalación
+
+### 🚀 Instalación
+
+#### Instalador (Recomendado)
+1. Descarga el archivo \`TTS-Electron-Setup-$VERSION_NUM.exe\`
+2. Ejecuta el instalador como administrador
+3. Sigue las instrucciones en pantalla
+4. La aplicación se instalará con todos los componentes necesarios
+
+#### Versión Portable
+1. Descarga el archivo \`TTS-Electron-$VERSION_NUM-portable.exe\`
+2. Ejecuta directamente sin instalación
+3. Todos los archivos se mantienen en la carpeta de la aplicación
+
+### 💻 Requisitos del Sistema
+- Windows 10 o superior (64-bit)
+- 2 GB de RAM mínimo (4 GB recomendado)
+- 500 MB de espacio libre en disco
+- Tarjeta de sonido compatible
+
+### 🎯 Uso
+1. Abre la aplicación
+2. Selecciona la carpeta con tus modelos Piper TTS
+3. Elige el modelo de voz deseado
+4. Escribe o pega el texto a convertir
+5. Ajusta la configuración de audio si es necesario
+6. Haz clic en \"Generar Audio\"
+
+### 🔧 Modelos TTS
+Esta aplicación requiere modelos Piper TTS en formato ONNX. Puedes descargar modelos desde:
+- [Repositorio oficial de Piper](https://github.com/rhasspy/piper)
+- [Hugging Face - Modelos Piper](https://huggingface.co/rhasspy/piper-voices)
+
+### 📝 Notas de la Versión
+- Mejoras en el rendimiento de síntesis
+- Correcciones de errores menores
+- Interfaz optimizada
+
+---
+
+**Construido automáticamente el:** $(date -u +\"%Y-%m-%d %H:%M:%S UTC\")  
+**Commit:** ${{ github.sha }}  
+**Plataforma:** Windows x64"
+          
+          # Create the release
+          RELEASE_RESPONSE=$(curl -s \
+            -X POST \
+            -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+            -H "Accept: application/vnd.github.v3+json" \
+            "https://api.github.com/repos/${{ github.repository }}/releases" \
+            -d "{
+              \"tag_name\": \"$VERSION_TAG\",
+              \"name\": \"Piper TTS Electron $VERSION_TAG\",
+              \"body\": $(echo "$RELEASE_BODY" | jq -Rs .),
+              \"draft\": true,
+              \"prerelease\": false
+            }")
+          
+          if echo "$RELEASE_RESPONSE" | grep -q '"id"'; then
+            RELEASE_ID=$(echo "$RELEASE_RESPONSE" | jq -r '.id')
+            UPLOAD_URL=$(echo "$RELEASE_RESPONSE" | jq -r '.upload_url')
+            echo "✅ Created draft release with ID: $RELEASE_ID"
+            echo "release_id=$RELEASE_ID" >> $GITHUB_OUTPUT
+            echo "upload_url=$UPLOAD_URL" >> $GITHUB_OUTPUT
+            echo "created_new=true" >> $GITHUB_OUTPUT
+          else
+            echo "❌ Failed to create release"
+            echo "$RELEASE_RESPONSE"
+            exit 1
+          fi
         fi
-        echo "upload_url=$UPLOAD_URL" >> $GITHUB_OUTPUT
+
+    - name: Publish release if new
+      if: steps.check_release.outputs.exe_exists == 'false' && steps.create_release.outputs.created_new == 'true'
+      run: |
+        echo "Publishing draft release..."
+        curl -s \
+          -X PATCH \
+          -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" \
+          -H "Accept: application/vnd.github.v3+json" \
+          "https://api.github.com/repos/${{ github.repository }}/releases/${{ steps.create_release.outputs.release_id }}" \
+          -d '{"draft": false}' > /dev/null
+        echo "✅ Release published successfully"
 
     - name: Upload Setup executable
       if: steps.check_release.outputs.exe_exists == 'false' && steps.find_exe.outputs.has_setup == 'true'
@@ -299,7 +347,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ${{ steps.find_exe.outputs.setup_exe_path }}
         asset_name: TTS-Electron-Setup-${{ steps.version.outputs.version_number }}.exe
         asset_content_type: application/octet-stream
@@ -310,7 +358,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ${{ steps.find_exe.outputs.portable_exe_path }}
         asset_name: TTS-Electron-${{ steps.version.outputs.version_number }}-portable.exe
         asset_content_type: application/octet-stream
@@ -321,7 +369,7 @@ jobs:
       env:
         GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       with:
-        upload_url: ${{ steps.get_upload_url.outputs.upload_url }}
+        upload_url: ${{ steps.create_release.outputs.upload_url }}
         asset_path: ${{ steps.find_exe.outputs.other_exe_path }}
         asset_name: TTS-Electron-${{ steps.version.outputs.version_number }}.exe
         asset_content_type: application/octet-stream

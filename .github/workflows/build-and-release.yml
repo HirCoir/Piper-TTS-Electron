@@ -136,20 +136,46 @@ jobs:
       if: steps.check_release.outputs.exe_exists == 'false'
       env:
         WINEARCH: win64
-        WINEPREFIX: /tmp/wine64
+        WINEPREFIX: ${{ runner.temp }}/wine64
       run: |
         echo "Initializing Wine environment..."
+        
+        # Create Wine prefix directory with proper permissions
+        mkdir -p "${{ runner.temp }}/wine64"
+        chmod 755 "${{ runner.temp }}/wine64"
+        
+        # Kill any existing Xvfb processes
+        pkill Xvfb || true
+        sleep 1
+        
+        # Start Xvfb with proper permissions
         export DISPLAY=:99
-        Xvfb :99 -screen 0 1024x768x16 &
-        sleep 2
+        Xvfb :99 -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
+        XVFB_PID=$!
+        sleep 3
+        
+        # Verify Xvfb is running
+        if ! ps -p $XVFB_PID > /dev/null; then
+          echo "Failed to start Xvfb"
+          exit 1
+        fi
+        
+        echo "Xvfb started with PID: $XVFB_PID"
+        
+        # Initialize Wine
+        echo "Initializing Wine with prefix: ${{ runner.temp }}/wine64"
         wineboot --init
         sleep 5
+        
+        # Verify Wine installation
+        wine --version
+        echo "Wine environment initialized successfully"
 
     - name: Build Windows executable
       if: steps.check_release.outputs.exe_exists == 'false'
       env:
         WINEARCH: win64
-        WINEPREFIX: /tmp/wine64
+        WINEPREFIX: ${{ runner.temp }}/wine64
         DISPLAY: :99
         CSC_IDENTITY_AUTO_DISCOVERY: false
       run: |
@@ -160,8 +186,15 @@ jobs:
         export npm_config_target_arch=x64
         export npm_config_disturl=https://electronjs.org/headers
         export npm_config_runtime=electron
-        export npm_config_cache=/tmp/.npm
+        export npm_config_cache=${{ runner.temp }}/.npm
         export npm_config_build_from_source=true
+        
+        # Ensure Xvfb is still running
+        if ! pgrep Xvfb > /dev/null; then
+          echo "Restarting Xvfb..."
+          Xvfb :99 -screen 0 1024x768x16 -ac +extension GLX +render -noreset &
+          sleep 3
+        fi
         
         # Build for Windows
         npm run build
@@ -351,7 +384,8 @@ jobs:
         # Clean up build artifacts to save space
         rm -rf dist/ || true
         rm -rf node_modules/.cache || true
-        rm -rf /tmp/wine64 || true
+        rm -rf "${{ runner.temp }}/wine64" || true
+        rm -rf "${{ runner.temp }}/.npm" || true
         
         # Kill any remaining Xvfb processes
         pkill Xvfb || true

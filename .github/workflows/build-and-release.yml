@@ -22,7 +22,6 @@ jobs:
       uses: actions/setup-node@v4
       with:
         node-version: '18'
-        cache: 'npm'
 
     - name: Get version from release
       id: version
@@ -45,7 +44,7 @@ jobs:
         echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
 
     - name: Install dependencies
-      run: npm ci
+      run: npm install
 
     - name: Update version in package.json
       run: |

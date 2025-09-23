@@ -147,9 +147,9 @@ ipcMain.handle('scan-models', async (event, folderPath) => {
             models.push({
               id: modelcard.id || file.replace('.onnx.json', ''),
               name: modelcard.name || file.replace('.onnx.json', ''),
-              description: modelcard.description || 'No description available',
-              language: modelcard.language || 'Unknown',
-              voiceprompt: modelcard.voiceprompt || 'Not available',
+              description: modelcard.description || 'No disponible',
+              language: modelcard.language || 'Desconocido',
+              voiceprompt: modelcard.voiceprompt || 'No disponible',
               jsonPath: jsonPath,
               onnxPath: onnxPath,
               image: modelcard.image || null

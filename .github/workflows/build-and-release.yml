@@ -1,109 +1,156 @@
-name: Build and Release Electron App
+name: Build and Release Piper TTS Electron App
 
 on:
   workflow_dispatch:
   release:
-    types: [created, published]
+    types: [published]
 
 permissions:
   contents: write
 
 jobs:
-  build_windows:
-    name: "Build Windows Electron App"
-    runs-on: windows-latest
+  build-and-release:
+    runs-on: [self-hosted, linux]
+    
     steps:
-      - name: Checkout code
-        uses: actions/checkout@v4
+    - name: Checkout repository
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
 
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: '18'
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '18'
+        cache: 'npm'
 
-      - name: Update package.json version
-        run: |
-          node -e "
-          const fs = require('fs');
-          const pkg = JSON.parse(fs.readFileSync('package.json', 'utf8'));
-          const releaseTag = '${{ github.event.release.tag_name }}';
-          let version = releaseTag.startsWith('v') ? releaseTag.substring(1) : releaseTag;
-          
-          // Ensure semantic versioning format (x.y.z)
-          const versionParts = version.split('.');
-          if (versionParts.length === 1) {
-            version = version + '.0.0';
-          } else if (versionParts.length === 2) {
-            version = version + '.0';
-          }
-          
-          pkg.version = version;
-          fs.writeFileSync('package.json', JSON.stringify(pkg, null, 2));
-          console.log('Updated version to:', version);
-          "
+    - name: Get version from release
+      id: version
+      run: |
+        if [ "${{ github.event_name }}" = "release" ]; then
+          VERSION="${{ github.event.release.tag_name }}"
+        else
+          VERSION="v1.0.0"  # Default for manual dispatch
+        fi
+        
+        # Extract version number and ensure it's in x.y.z format
+        VERSION_NUMBER=${VERSION#v}
+        
+        # If version is only x.y, add .0 to make it x.y.z
+        if [[ $VERSION_NUMBER =~ ^[0-9]+\.[0-9]+$ ]]; then
+          VERSION_NUMBER="${VERSION_NUMBER}.0"
+        fi
+        
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+        echo "version_number=$VERSION_NUMBER" >> $GITHUB_OUTPUT
 
-      - name: Install dependencies
-        run: npm install
+    - name: Install dependencies
+      run: npm ci
 
-      - name: Build Electron app
-        run: npm run build
-        env:
-          GH_TOKEN: ""
+    - name: Update version in package.json
+      run: |
+        TARGET_VERSION="${{ steps.version.outputs.version_number }}"
+        echo "Setting version to: $TARGET_VERSION"
+        
+        # Use sed to directly update the version in package.json
+        sed -i "s/\"version\": \"[^\"]*\"/\"version\": \"$TARGET_VERSION\"/" package.json
+        
+        # Verify the change
+        echo "Updated version:"
+        grep '"version":' package.json
 
-      - name: List dist contents
-        run: dir dist
+    - name: Verify required files exist
+      run: |
+        echo "Checking for required files..."
+        
+        # Check for icon file
+        if [ ! -f "assets/icon.ico" ]; then
+          echo "Warning: assets/icon.ico not found"
+          mkdir -p assets
+          # Create a placeholder icon if ImageMagick is available
+          convert -size 256x256 xc:transparent assets/icon.ico 2>/dev/null || echo "Could not create placeholder icon"
+        else
+          echo "Icon file found: assets/icon.ico"
+        fi
+        
+        # Check for piper directory
+        if [ ! -d "piper" ]; then
+          echo "Warning: piper directory not found - this may cause build issues"
+        else
+          echo "Piper directory found"
+        fi
+        
+        # Check for other required files
+        for file in voices.json; do
+          if [ ! -f "$file" ]; then
+            echo "Warning: $file not found"
+          else
+            echo "Found: $file"
+          fi
+        done
 
-      - name: Rename and upload portable executable
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $releaseTag = "${{ github.event.release.tag_name }}"
-          $version = if ($releaseTag.StartsWith("v")) { $releaseTag.Substring(1) } else { $releaseTag }
-          
-          # Ensure semantic versioning format (x.y.z)
-          $versionParts = $version.Split('.')
-          if ($versionParts.Length -eq 1) {
-            $version = $version + ".0.0"
-          } elseif ($versionParts.Length -eq 2) {
-            $version = $version + ".0"
-          }
-          
-          # Find and rename portable executable
-          $portableFile = Get-ChildItem -Path "dist" -Name "*portable.exe" | Select-Object -First 1
-          if ($portableFile) {
-            $newPortableName = $portableFile -replace "1\.0\.0", $version
-            Rename-Item -Path "dist\$portableFile" -NewName $newPortableName
-            gh release upload ${{ github.event.release.tag_name }} "dist\$newPortableName" --clobber --repo ${{ github.repository }}
-            Write-Host "Uploaded: $newPortableName"
-          }
+    - name: Build Windows executable
+      run: |
+        echo "Building TTS Electron for Windows..."
+        npx electron-builder --win --x64 --publish=never
 
-      - name: Rename and upload x64 executable
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          $releaseTag = "${{ github.event.release.tag_name }}"
-          $version = if ($releaseTag.StartsWith("v")) { $releaseTag.Substring(1) } else { $releaseTag }
-          
-          # Ensure semantic versioning format (x.y.z)
-          $versionParts = $version.Split('.')
-          if ($versionParts.Length -eq 1) {
-            $version = $version + ".0.0"
-          } elseif ($versionParts.Length -eq 2) {
-            $version = $version + ".0"
-          }
-          
-          # Find and rename x64 executable (excluding portable)
-          $x64File = Get-ChildItem -Path "dist" -Name "*x64.exe" | Where-Object { $_ -notlike "*portable*" } | Select-Object -First 1
-          if ($x64File) {
-            $newX64Name = $x64File -replace "1\.0\.0", $version
-            Rename-Item -Path "dist\$x64File" -NewName $newX64Name
-            gh release upload ${{ github.event.release.tag_name }} "dist\$newX64Name" --clobber --repo ${{ github.repository }}
-            Write-Host "Uploaded: $newX64Name"
-          }
+    - name: List build outputs
+      run: |
+        echo "Build completed. Listing dist directory contents:"
+        ls -la dist/ || echo "No dist directory found"
+        
+        echo "Looking for executables and installers:"
+        find dist/ -name "*.exe" -o -name "*.msi" -o -name "*.zip" 2>/dev/null || echo "No executables found"
 
-      - name: Upload build artifacts (optional)
-        uses: actions/upload-artifact@v4
-        with:
-          name: windows-executables
-          path: dist/*.exe
-          retention-days: 7
+    - name: Package unpacked folder
+      run: |
+        cd dist && \
+        if [ -d "win-unpacked" ]; then
+          echo "Packaging unpacked folder..."
+          tar -czf tts-electron_unpacked.tar.gz win-unpacked/
+          echo "Unpacked folder packaged successfully"
+        else
+          echo "No win-unpacked folder found"
+        fi
+
+    - name: Upload to release
+      if: github.event_name == 'release'
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        echo "Uploading release artifacts..."
+        
+        # Upload all executable files (installers and portable versions)
+        for file in dist/*.exe; do
+          if [ -f "$file" ]; then
+            echo "Uploading: $file"
+            gh release upload ${{ github.event.release.tag_name }} "$file" --clobber --repo ${{ github.repository }}
+          fi
+        done
+        
+        # Upload MSI installers if they exist
+        for file in dist/*.msi; do
+          if [ -f "$file" ]; then
+            echo "Uploading: $file"
+            gh release upload ${{ github.event.release.tag_name }} "$file" --clobber --repo ${{ github.repository }}
+          fi
+        done
+        
+        # Upload unpacked folder if it exists
+        if [ -f "dist/tts-electron_unpacked.tar.gz" ]; then
+          echo "Uploading unpacked folder..."
+          gh release upload ${{ github.event.release.tag_name }} dist/tts-electron_unpacked.tar.gz --clobber --repo ${{ github.repository }}
+        fi
+        
+        echo "Upload completed"
+
+    - name: Cleanup build artifacts
+      if: always()
+      run: |
+        echo "Cleaning up build artifacts..."
+        rm -rf dist/ || true
+        rm -rf node_modules/.cache/ || true
+        rm -rf ~/.cache/electron/ || true
+        rm -rf ~/.cache/electron-builder/ || true
+        rm -rf /tmp/electron-* || true
+        echo "Cleanup completed - runner is clean for next job"

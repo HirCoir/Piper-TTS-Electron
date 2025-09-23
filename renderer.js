@@ -3,6 +3,8 @@ let availableModels = [];
 let selectedModel = null;
 let isConverting = false;
 let currentAudio = null;
+let currentConversionId = null;
+let progressInterval = null;
 
 // DOM elements
 let textInput;
@@ -23,6 +25,13 @@ document.addEventListener('DOMContentLoaded', async () => {
   setupEventListeners();
   await loadSettings();
   autoResizeTextarea(); // Resize on load if there's saved text
+  
+  // Clean up on page unload
+  window.addEventListener('beforeunload', () => {
+    if (currentConversionId) {
+      cancelCurrentConversion();
+    }
+  });
 });
 
 function initializeElements() {
@@ -398,30 +407,35 @@ async function handleGenerate() {
     return;
   }
   
-  if (isConverting) return;
+  if (isConverting) {
+    // If already converting, cancel the current conversion
+    await cancelCurrentConversion();
+    return;
+  }
   
   try {
     isConverting = true;
     updateGenerateButton(true);
-    showProgress('Generando audio...');
+    showProgressWithCancel('Iniciando conversión...');
     
     const settings = getAudioSettings();
     
     const response = await window.serverAPI.convertText(text, selectedModel.onnxPath, settings);
     
     if (response.success) {
-      displayAudio(response.audio);
-      showSuccess(`Audio generado exitosamente (${response.sentenceCount} oraciones)`);
+      currentConversionId = response.conversionId;
+      showProgressWithCancel(`Procesando ${response.totalSentences} oraciones...`);
+      
+      // Start polling for progress
+      startProgressPolling();
     } else {
-      showError('Error al generar audio: ' + response.error);
+      showError('Error al iniciar conversión: ' + response.error);
+      resetConversionState();
     }
   } catch (error) {
-    console.error('Error generating audio:', error);
-    showError('Error de conexión al generar audio');
-  } finally {
-    isConverting = false;
-    updateGenerateButton(false);
-    hideProgress();
+    console.error('Error starting conversion:', error);
+    showError('Error de conexión al iniciar conversión');
+    resetConversionState();
   }
 }
 
@@ -454,16 +468,18 @@ function displayAudio(audioData) {
 function updateGenerateButton(loading) {
   if (loading) {
     generateBtn.innerHTML = `
-      <div class="loading-spinner"></div>
-      <span>Generando...</span>
+      <i class="fas fa-stop"></i>
+      <span>Cancelar</span>
     `;
-    generateBtn.disabled = true;
+    generateBtn.disabled = false;
+    generateBtn.classList.add('cancel-mode');
   } else {
     generateBtn.innerHTML = `
       <i class="fas fa-play"></i>
       <span>Generar Audio</span>
     `;
     generateBtn.disabled = !selectedModel;
+    generateBtn.classList.remove('cancel-mode');
   }
 }
 
@@ -473,6 +489,38 @@ function showProgress(message) {
       <div class="progress-message">
         <div class="loading-spinner"></div>
         <span>${message}</span>
+      </div>
+    `;
+    progressContainer.classList.remove('hidden');
+  }
+}
+
+function showProgressWithCancel(message, progress = null) {
+  if (progressContainer) {
+    let progressBarHtml = '';
+    if (progress) {
+      progressBarHtml = `
+        <div class="progress-bar-container">
+          <div class="progress-bar">
+            <div class="progress-bar-fill" style="width: ${progress.percentage}%"></div>
+          </div>
+          <div class="progress-text">${progress.completed}/${progress.total} oraciones (${progress.percentage}%)</div>
+        </div>
+      `;
+    }
+    
+    progressContainer.innerHTML = `
+      <div class="progress-dialog">
+        <div class="progress-header">
+          <span>${message}</span>
+          <button class="cancel-btn" onclick="cancelCurrentConversion()">
+            <i class="fas fa-times"></i>
+          </button>
+        </div>
+        ${progressBarHtml}
+        <div class="progress-spinner">
+          <div class="loading-spinner"></div>
+        </div>
       </div>
     `;
     progressContainer.classList.remove('hidden');
@@ -708,9 +756,11 @@ async function saveThreadSettings() {
     const maxThreadsInput = document.getElementById('max-threads-setting');
     
     const requestData = {
-      autoDetectThreads: autoThreadsCheckbox?.checked || true,
+      autoDetectThreads: autoThreadsCheckbox?.checked === true,
       maxThreads: parseInt(maxThreadsInput?.value || '8')
     };
+    
+    console.log('[UI] Saving thread settings:', requestData);
     
     const port = await window.electronAPI.getServerPort();
     const response = await fetch(`http://localhost:${port}/settings`, {
@@ -770,4 +820,95 @@ function startQueueStatusUpdates() {
       }
     }
   }, 2000);
+}
+
+// Progress polling functions
+function startProgressPolling() {
+  if (progressInterval) {
+    clearInterval(progressInterval);
+  }
+  
+  progressInterval = setInterval(async () => {
+    if (!currentConversionId) {
+      clearInterval(progressInterval);
+      return;
+    }
+    
+    try {
+      const port = await window.electronAPI.getServerPort();
+      const response = await fetch(`http://localhost:${port}/conversion-status/${currentConversionId}`);
+      const data = await response.json();
+      
+      if (data.success) {
+        const conversion = data.conversion;
+        
+        if (conversion.cancelled) {
+          showError('Conversión cancelada');
+          resetConversionState();
+        } else if (conversion.failed) {
+          showError('Error en la conversión: ' + (conversion.error || 'Error desconocido'));
+          resetConversionState();
+        } else if (conversion.completed) {
+          // Conversion completed successfully
+          displayAudio(conversion.result.audio);
+          showSuccess(`Audio generado exitosamente (${conversion.result.sentenceCount} oraciones)`);
+          resetConversionState();
+        } else {
+          // Update progress
+          const progress = conversion.progress;
+          showProgressWithCancel(
+            `Procesando oraciones...`,
+            progress
+          );
+        }
+      } else {
+        showError('Error al obtener estado de conversión');
+        resetConversionState();
+      }
+    } catch (error) {
+      console.error('Error polling conversion status:', error);
+      showError('Error de conexión al obtener progreso');
+      resetConversionState();
+    }
+  }, 1000); // Poll every second
+}
+
+async function cancelCurrentConversion() {
+  if (!currentConversionId) {
+    resetConversionState();
+    return;
+  }
+  
+  try {
+    const port = await window.electronAPI.getServerPort();
+    const response = await fetch(`http://localhost:${port}/cancel-conversion/${currentConversionId}`, {
+      method: 'POST'
+    });
+    
+    const data = await response.json();
+    
+    if (data.success) {
+      showSuccess('Conversión cancelada');
+    } else {
+      showError('Error al cancelar: ' + data.error);
+    }
+  } catch (error) {
+    console.error('Error cancelling conversion:', error);
+    showError('Error de conexión al cancelar');
+  }
+  
+  resetConversionState();
+}
+
+function resetConversionState() {
+  isConverting = false;
+  currentConversionId = null;
+  
+  if (progressInterval) {
+    clearInterval(progressInterval);
+    progressInterval = null;
+  }
+  
+  updateGenerateButton(false);
+  hideProgress();
 }

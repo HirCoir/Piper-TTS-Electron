@@ -58,14 +58,22 @@ jobs:
         echo "Updated version:"
         grep '"version":' package.json
 
-    - name: Create icon file if missing
+    - name: Create missing files
       run: |
+        # Create icon file if missing
         if [ ! -f "assets/icon.ico" ]; then
           mkdir -p assets
           convert -size 256x256 xc:transparent assets/icon.ico || echo "Warning: Could not create icon file"
         fi
+        
+        # Create voices.json if missing
+        if [ ! -f "voices.json" ]; then
+          echo '{}' > voices.json
+        fi
 
     - name: Build Windows executable
+      env:
+        CSC_IDENTITY_AUTO_DISCOVERY: false
       run: |
         npx electron-builder --win --x64 --publish=never
 

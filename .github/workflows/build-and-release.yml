@@ -10,7 +10,7 @@ permissions:
 
 jobs:
   build-and-release:
-    runs-on: [self-hosted, 7f801ecde20c]
+    runs-on: [self-hosted, linux]
     
     steps:
     - name: Checkout repository

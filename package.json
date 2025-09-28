@@ -1,14 +1,12 @@
 {
-  "name": "tts-electron",
+  "name": "piper-tts-electron",
   "version": "1.0.0",
   "description": "Text-to-Speech Electron application with Piper TTS models",
   "main": "main.js",
   "scripts": {
     "start": "electron .",
     "dev": "electron . --dev",
-    "build": "electron-builder --win --x64 --publish=never",
-    "build-all": "electron-builder --win --linux --mac",
-    "dist": "electron-builder --publish=never",
+    "build": "electron-builder --win --x64",
     "pack": "electron-builder --dir"
   },
   "keywords": [
@@ -32,7 +30,7 @@
   },
   "build": {
     "appId": "com.hircoir.tts-electron",
-    "productName": "TTS Electron",
+    "productName": "Piper TTS Electron",
     "directories": {
       "output": "dist",
       "buildResources": "assets"
@@ -62,36 +60,18 @@
       {
         "from": "ffprobe.exe",
         "to": "ffprobe.exe"
-      },
-      {
-        "from": "voices.json",
-        "to": "voices.json"
       }
     ],
     "win": {
       "icon": "assets/icon.ico",
       "target": [
         {
-          "target": "nsis",
-          "arch": ["x64"]
-        },
-        {
-          "target": "portable",
+          "target": "zip",
           "arch": ["x64"]
         }
       ],
       "requestedExecutionLevel": "asInvoker",
       "artifactName": "${productName}-${version}-${arch}.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true,
-      "createDesktopShortcut": true,
-      "createStartMenuShortcut": true,
-      "shortcutName": "TTS Electron"
-    },
-    "portable": {
-      "artifactName": "${productName}-${version}-portable.${ext}"
     },
     "linux": {
       "target": "AppImage",

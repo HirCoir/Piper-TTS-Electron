@@ -68,11 +68,6 @@ function startServer() {
   }
 }
 
-// IPC handler to get server port
-ipcMain.handle('get-server-port', () => {
-  return global.serverPort || 3000; // Fallback to 3000 if not set
-});
-
 // Stop the server
 function stopServer() {
   // Server is now integrated, no separate process to kill
@@ -147,9 +142,9 @@ ipcMain.handle('scan-models', async (event, folderPath) => {
             models.push({
               id: modelcard.id || file.replace('.onnx.json', ''),
               name: modelcard.name || file.replace('.onnx.json', ''),
-              description: modelcard.description || 'No disponible',
-              language: modelcard.language || 'Desconocido',
-              voiceprompt: modelcard.voiceprompt || 'No disponible',
+              description: modelcard.description || 'No description available',
+              language: modelcard.language || 'Unknown',
+              voiceprompt: modelcard.voiceprompt || 'Not available',
               jsonPath: jsonPath,
               onnxPath: onnxPath,
               image: modelcard.image || null

@@ -46,31 +46,20 @@ class ProcessQueue {
       
       console.log(`[QUEUE] Starting task ${queueItem.id}. Running: ${this.running.size}/${this.maxConcurrent}`);
       
-      // Execute the task with proper error handling
-      this.executeTask(queueItem);
-    }
-  }
-  
-  async executeTask(queueItem) {
-    try {
-      const result = await queueItem.task();
-      this.running.delete(queueItem.id);
-      console.log(`[QUEUE] Completed task ${queueItem.id}. Running: ${this.running.size}/${this.maxConcurrent}`);
-      queueItem.resolve(result);
-    } catch (error) {
-      this.running.delete(queueItem.id);
-      console.log(`[QUEUE] Failed task ${queueItem.id}. Running: ${this.running.size}/${this.maxConcurrent}`);
-      
-      // Check if it's a cancellation error - don't reject in this case
-      if (error.message === 'Conversion was cancelled') {
-        console.log(`[QUEUE] Task ${queueItem.id} was cancelled, resolving with null`);
-        queueItem.resolve(null);
-      } else {
-        queueItem.reject(error);
-      }
-    } finally {
-      // Always process next item in queue
-      setImmediate(() => this.processQueue());
+      // Execute the task
+      queueItem.task()
+        .then(result => {
+          this.running.delete(queueItem.id);
+          console.log(`[QUEUE] Completed task ${queueItem.id}. Running: ${this.running.size}/${this.maxConcurrent}`);
+          queueItem.resolve(result);
+          this.processQueue(); // Process next item in queue
+        })
+        .catch(error => {
+          this.running.delete(queueItem.id);
+          console.log(`[QUEUE] Failed task ${queueItem.id}. Running: ${this.running.size}/${this.maxConcurrent}`);
+          queueItem.reject(error);
+          this.processQueue(); // Process next item in queue
+        });
     }
   }
 
@@ -87,9 +76,6 @@ class ProcessQueue {
 // Global process queue instance
 const processQueue = new ProcessQueue();
 
-// Active conversion sessions for cancellation
-const activeConversions = new Map();
-
 // Settings for user configuration
 let userSettings = {
   maxThreads: processQueue.maxConcurrent,
@@ -97,7 +83,7 @@ let userSettings = {
 };
 
 const app = express();
-let PORT = 0; // 0 means random available port
+const PORT = 3000;
 
 // Middleware
 const cors = require('cors');
@@ -112,93 +98,6 @@ let piperPath, ffmpegPath, ffprobePath;
 
 // Default model paths
 const onnxTtsPath = path.join(os.homedir(), 'Documents', 'onnx-tts');
-
-// Settings file path
-let settingsPath;
-
-// Load user settings from settings.json
-async function loadUserSettings() {
-  try {
-    const isPackaged = process.env.ELECTRON_IS_PACKAGED === 'true';
-    
-    if (isPackaged) {
-      settingsPath = path.join(process.resourcesPath, 'assets', 'settings.json');
-    } else {
-      settingsPath = path.join(__dirname, 'assets', 'settings.json');
-    }
-    
-    if (await fs.pathExists(settingsPath)) {
-      const settings = await fs.readJson(settingsPath);
-      console.log('[SETTINGS] Loaded user settings from file:', settings);
-      
-      // Update userSettings with loaded values
-      if (settings.threads) {
-        userSettings.autoDetectThreads = settings.threads.autoDetectThreads === true;
-        userSettings.maxThreads = Math.max(1, Math.min(32, settings.threads.maxThreads || 1));
-        
-        console.log(`[SETTINGS] Applying settings - Auto: ${userSettings.autoDetectThreads}, Max: ${userSettings.maxThreads}`);
-        
-        // Apply thread settings immediately
-        if (userSettings.autoDetectThreads) {
-          const autoThreads = CPU_CORES * 2;
-          processQueue.setMaxConcurrent(autoThreads);
-          userSettings.maxThreads = autoThreads;
-          console.log(`[SETTINGS] Auto-detect mode: using ${autoThreads} threads`);
-        } else {
-          processQueue.setMaxConcurrent(userSettings.maxThreads);
-          console.log(`[SETTINGS] Manual mode: using ${userSettings.maxThreads} threads`);
-        }
-      }
-      
-      return settings;
-    } else {
-      console.log('[SETTINGS] Settings file not found, creating default');
-      // Create default settings with manual mode and 1 thread
-      userSettings.autoDetectThreads = false;
-      userSettings.maxThreads = 1;
-      processQueue.setMaxConcurrent(1);
-      await saveUserSettings();
-      return {
-        threads: {
-          autoDetectThreads: false,
-          maxThreads: 1
-        },
-        audio: {
-          speaker: 0,
-          noise_scale: 0.667,
-          length_scale: 1.0,
-          noise_w: 0.8
-        }
-      };
-    }
-  } catch (error) {
-    console.error('[SETTINGS] Error loading settings:', error);
-    return null;
-  }
-}
-
-// Save user settings to settings.json
-async function saveUserSettings() {
-  try {
-    const settings = {
-      threads: {
-        autoDetectThreads: userSettings.autoDetectThreads,
-        maxThreads: userSettings.maxThreads
-      },
-      audio: {
-        speaker: 0,
-        noise_scale: 0.667,
-        length_scale: 1.0,
-        noise_w: 0.8
-      }
-    };
-    
-    await fs.writeJson(settingsPath, settings, { spaces: 2 });
-    console.log('[SETTINGS] Settings saved:', settings);
-  } catch (error) {
-    console.error('[SETTINGS] Error saving settings:', error);
-  }
-}
 
 // Initialize paths - handle both development and packaged app
 function initializePaths() {
@@ -293,9 +192,9 @@ async function scanModels() {
                 const model = {
                   id: modelcard.id || file.replace('.onnx.json', ''),
                   name: modelcard.name || file.replace('.onnx.json', ''),
-                  description: modelcard.description || 'No disponible',
-                  language: modelcard.language || 'Desconocido',
-                  voiceprompt: modelcard.voiceprompt || 'No disponible',
+                  description: modelcard.description || 'No description available',
+                  language: modelcard.language || 'Unknown',
+                  voiceprompt: modelcard.voiceprompt || 'Not available',
                   jsonPath: jsonPath,
                   onnxPath: onnxPath,
                   image: imageBase64,
@@ -770,7 +669,7 @@ function filterTextSegment(textSegment, modelReplacements) {
 }
 
 // Generate audio using Piper (single process)
-async function generateAudio(text, modelPath, settings = {}, conversionId = null) {
+async function generateAudio(text, modelPath, settings = {}) {
   return new Promise((resolve, reject) => {
     const outputFile = path.join(os.tmpdir(), `tts_${generateRandomString()}.wav`);
     
@@ -790,12 +689,6 @@ async function generateAudio(text, modelPath, settings = {}, conversionId = null
       stdio: ['pipe', 'pipe', 'pipe']
     });
     
-    // Store process for potential cancellation
-    if (conversionId && activeConversions.has(conversionId)) {
-      const conversion = activeConversions.get(conversionId);
-      conversion.processes.push(piperProcess);
-    }
-    
     let stderr = '';
     
     piperProcess.stderr.on('data', (data) => {
@@ -806,12 +699,7 @@ async function generateAudio(text, modelPath, settings = {}, conversionId = null
       if (code === 0) {
         resolve(outputFile);
       } else {
-        // Check if it was cancelled
-        if (conversionId && activeConversions.has(conversionId) && activeConversions.get(conversionId).cancelled) {
-          reject(new Error('Conversion was cancelled'));
-        } else {
-          reject(new Error(`Piper failed with code ${code}: ${stderr}`));
-        }
+        reject(new Error(`Piper failed with code ${code}: ${stderr}`));
       }
     });
     
@@ -825,68 +713,25 @@ async function generateAudio(text, modelPath, settings = {}, conversionId = null
   });
 }
 
-// Process multiple sentences using the queue system with progress tracking
-async function generateAudioParallel(sentences, modelPath, settings = {}, conversionId = null, progressCallback = null) {
-  // CRITICAL: Load current settings before processing to ensure thread limits are respected
-  await loadUserSettings();
-  
-  // Force apply the current settings to the queue
-  if (userSettings.autoDetectThreads) {
-    const autoThreads = CPU_CORES * 2;
-    processQueue.setMaxConcurrent(autoThreads);
-  } else {
-    processQueue.setMaxConcurrent(userSettings.maxThreads);
-  }
-  
+// Process multiple sentences using the queue system
+async function generateAudioParallel(sentences, modelPath, settings = {}) {
   const queueStatus = processQueue.getStatus();
-  console.log(`[PARALLEL] FORCED THREAD UPDATE - Using ${queueStatus.maxConcurrent} max concurrent processes`);
-  console.log(`[PARALLEL] Processing ${sentences.length} sentences`);
+  console.log(`[PARALLEL] Processing ${sentences.length} sentences with max ${queueStatus.maxConcurrent} concurrent processes`);
   console.log(`[PARALLEL] Queue status - Running: ${queueStatus.running}, Queued: ${queueStatus.queued}`);
-  console.log(`[PARALLEL] Current thread settings - Auto: ${userSettings.autoDetectThreads}, Max: ${userSettings.maxThreads}`);
-  
-  let completedCount = 0;
   
   // Function to create a queued task for a single sentence
   const createSentenceTask = (sentence, index) => {
-    return async () => {
-      // Check if conversion was cancelled
-      if (conversionId && activeConversions.has(conversionId) && activeConversions.get(conversionId).cancelled) {
-        throw new Error('Conversion was cancelled');
-      }
-      
+    return () => {
       console.log(`[PARALLEL] Starting sentence ${index + 1}/${sentences.length}: "${sentence.substring(0, 50)}..."`);
-      
-      try {
-        const audioFile = await generateAudio(sentence, modelPath, settings, conversionId);
-        
-        // Check again if cancelled after audio generation
-        if (conversionId && activeConversions.has(conversionId) && activeConversions.get(conversionId).cancelled) {
-          // Clean up the generated file
-          if (audioFile) {
-            fs.unlink(audioFile).catch(() => {});
-          }
-          throw new Error('Conversion was cancelled');
-        }
-        
-        completedCount++;
-        const progress = Math.round((completedCount / sentences.length) * 100);
-        console.log(`[PARALLEL] Completed sentence ${index + 1}/${sentences.length} (${progress}%)`);
-        
-        // Report progress
-        if (progressCallback) {
-          progressCallback({
-            completed: completedCount,
-            total: sentences.length,
-            percentage: progress,
-            currentSentence: index + 1
-          });
-        }
-        
-        return { index, audioFile, sentence };
-      } catch (error) {
-        console.error(`[PARALLEL] Error processing sentence ${index + 1}: ${error.message}`);
-        throw error;
-      }
+      return generateAudio(sentence, modelPath, settings)
+        .then(audioFile => {
+          console.log(`[PARALLEL] Completed sentence ${index + 1}/${sentences.length}`);
+          return { index, audioFile, sentence };
+        })
+        .catch(error => {
+          console.error(`[PARALLEL] Error processing sentence ${index + 1}: ${error.message}`);
+          throw error;
+        });
     };
   };
   
@@ -896,33 +741,14 @@ async function generateAudioParallel(sentences, modelPath, settings = {}, conver
     return processQueue.add(task);
   });
   
-  // Wait for all tasks to complete, filtering out cancelled ones
-  const results = await Promise.allSettled(taskPromises);
-  const successfulResults = results
-    .filter(result => result.status === 'fulfilled' && result.value !== null)
-    .map(result => result.value);
-  
-  // Check if conversion was cancelled during processing
-  if (conversionId && activeConversions.has(conversionId) && activeConversions.get(conversionId).cancelled) {
-    console.log(`[PARALLEL] Conversion ${conversionId} was cancelled, cleaning up`);
-    // Clean up any successful results
-    successfulResults.forEach(result => {
-      if (result && result.audioFile) {
-        fs.unlink(result.audioFile).catch(() => {});
-      }
-    });
-    throw new Error('Conversion was cancelled');
-  }
-  
-  if (successfulResults.length === 0) {
-    throw new Error('No sentences were processed successfully');
-  }
+  // Wait for all tasks to complete
+  const results = await Promise.all(taskPromises);
   
   // Sort results by original index to maintain order
-  successfulResults.sort((a, b) => a.index - b.index);
+  results.sort((a, b) => a.index - b.index);
   
-  console.log(`[PARALLEL] ${successfulResults.length}/${sentences.length} sentences processed successfully`);
-  return successfulResults.map(r => r.audioFile);
+  console.log(`[PARALLEL] All ${sentences.length} sentences processed successfully`);
+  return results.map(r => r.audioFile);
 }
 
 // Convert WAV to MP3 using FFmpeg
@@ -1046,13 +872,8 @@ app.post('/set-model-paths', async (req, res) => {
 });
 
 app.post('/convert', async (req, res) => {
-  const conversionId = generateRandomString(16);
-  
   try {
     const { text, modelPath, settings } = req.body;
-    
-    // Load current settings before processing
-    await loadUserSettings();
     
     if (!text || !text.trim()) {
       return res.status(400).json({
@@ -1077,8 +898,7 @@ app.post('/convert', async (req, res) => {
       });
     }
     
-    console.log(`Converting text with model: ${model.name} (ID: ${conversionId})`);
-    console.log(`[CONVERT] Using thread settings - Auto: ${userSettings.autoDetectThreads}, Max: ${userSettings.maxThreads}`);
+    console.log(`Converting text with model: ${model.name}`);
     
     // Apply comprehensive text filtering and replacements
     let processedText = filterTextSegment(text, model.replacements);
@@ -1103,32 +923,46 @@ app.post('/convert', async (req, res) => {
       });
     }
     
-    // Register conversion session for cancellation
-    activeConversions.set(conversionId, {
-      id: conversionId,
-      cancelled: false,
-      processes: [],
-      startTime: Date.now(),
-      totalSentences: sentences.length
-    });
+    // Generate audio for all sentences in parallel
+    const validSentences = sentences.filter(s => s.trim());
+    const audioFiles = await generateAudioParallel(validSentences, modelPath, settings);
     
-    // Send initial response with conversion ID
+    if (audioFiles.length === 0) {
+      return res.status(500).json({
+        success: false,
+        error: 'Failed to generate any audio'
+      });
+    }
+    
+    let finalAudioPath;
+    
+    if (audioFiles.length === 1) {
+      finalAudioPath = audioFiles[0];
+    } else {
+      // Concatenate multiple audio files
+      const concatenatedPath = path.join(os.tmpdir(), `final_${generateRandomString()}.wav`);
+      finalAudioPath = await concatenateAudio(audioFiles, concatenatedPath);
+    }
+    
+    // Convert to MP3
+    const mp3Path = await convertToMp3(finalAudioPath);
+    
+    // Read the MP3 file and encode as base64
+    const audioBuffer = await fs.readFile(mp3Path);
+    const audioBase64 = audioBuffer.toString('base64');
+    
+    // Clean up temporary file
+    fs.unlink(mp3Path).catch(console.error);
+    
     res.json({
       success: true,
-      conversionId: conversionId,
-      totalSentences: sentences.length,
-      message: 'Conversion started'
+      audio: `data:audio/mpeg;base64,${audioBase64}`,
+      model: model.name,
+      sentenceCount: sentences.length
     });
-    
-    // Continue processing in background
-    processConversionInBackground(conversionId, sentences, modelPath, settings, model.name);
     
   } catch (error) {
     console.error('Error in /convert:', error);
-    // Clean up if conversion was registered
-    if (activeConversions.has(conversionId)) {
-      activeConversions.delete(conversionId);
-    }
     res.status(500).json({
       success: false,
       error: error.message
@@ -1154,10 +988,7 @@ app.get('/rescan-models', async (req, res) => {
 });
 
 // Get current thread settings and queue status
-app.get('/settings', async (req, res) => {
-  // Always load fresh settings from file
-  await loadUserSettings();
-  
+app.get('/settings', (req, res) => {
   const queueStatus = processQueue.getStatus();
   res.json({
     success: true,
@@ -1173,43 +1004,34 @@ app.get('/settings', async (req, res) => {
 });
 
 // Update thread settings
-app.post('/settings', async (req, res) => {
+app.post('/settings', (req, res) => {
   try {
     const { maxThreads, autoDetectThreads } = req.body;
     
-    console.log(`[SETTINGS] Received request:`, { maxThreads, autoDetectThreads });
-    
-    // Update autoDetectThreads setting
     if (typeof autoDetectThreads === 'boolean') {
       userSettings.autoDetectThreads = autoDetectThreads;
-      console.log(`[SETTINGS] Updated autoDetectThreads to: ${autoDetectThreads}`);
     }
     
-    // Update maxThreads setting
     if (typeof maxThreads === 'number' && maxThreads > 0) {
       userSettings.maxThreads = Math.max(1, Math.min(32, maxThreads));
-      console.log(`[SETTINGS] Updated maxThreads to: ${userSettings.maxThreads}`);
+      
+      if (!userSettings.autoDetectThreads) {
+        processQueue.setMaxConcurrent(userSettings.maxThreads);
+      }
     }
     
-    // Apply the appropriate thread setting
+    // If auto-detect is enabled, use CPU-based calculation
     if (userSettings.autoDetectThreads) {
       const autoThreads = CPU_CORES * 2;
       processQueue.setMaxConcurrent(autoThreads);
       userSettings.maxThreads = autoThreads;
-      console.log(`[SETTINGS] Auto-detect enabled, using: ${autoThreads} threads`);
-    } else {
-      processQueue.setMaxConcurrent(userSettings.maxThreads);
-      console.log(`[SETTINGS] Manual mode enabled, using: ${userSettings.maxThreads} threads`);
     }
-    
-    // Save settings to file
-    await saveUserSettings();
     
     const queueStatus = processQueue.getStatus();
     
     res.json({
       success: true,
-      message: 'Settings updated and saved',
+      message: 'Settings updated',
       settings: {
         maxThreads: userSettings.maxThreads,
         autoDetectThreads: userSettings.autoDetectThreads,
@@ -1237,264 +1059,17 @@ app.get('/queue-status', (req, res) => {
   });
 });
 
-// Background conversion processing
-async function processConversionInBackground(conversionId, sentences, modelPath, settings, modelName) {
-  try {
-    const conversion = activeConversions.get(conversionId);
-    if (!conversion || conversion.cancelled) {
-      console.log(`[CONVERT] Conversion ${conversionId} was cancelled before processing`);
-      return;
-    }
-    
-    console.log(`[CONVERT] Starting background processing for ${conversionId}`);
-    
-    // Progress callback to update conversion status
-    const progressCallback = (progress) => {
-      if (activeConversions.has(conversionId) && !activeConversions.get(conversionId).cancelled) {
-        const conv = activeConversions.get(conversionId);
-        conv.progress = progress;
-        conv.lastUpdate = Date.now();
-      }
-    };
-    
-    // Generate audio for all sentences in parallel
-    const validSentences = sentences.filter(s => s.trim());
-    const audioFiles = await generateAudioParallel(validSentences, modelPath, settings, conversionId, progressCallback);
-    
-    // Check if cancelled during processing
-    if (!activeConversions.has(conversionId) || activeConversions.get(conversionId).cancelled) {
-      console.log(`[CONVERT] Conversion ${conversionId} was cancelled during processing`);
-      // Clean up any generated files
-      if (audioFiles && audioFiles.length > 0) {
-        audioFiles.forEach(file => {
-          if (file) {
-            fs.unlink(file).catch(() => {});
-          }
-        });
-      }
-      return;
-    }
-    
-    if (audioFiles.length === 0) {
-      throw new Error('Failed to generate any audio');
-    }
-    
-    let finalAudioPath;
-    
-    if (audioFiles.length === 1) {
-      finalAudioPath = audioFiles[0];
-    } else {
-      // Concatenate multiple audio files
-      const concatenatedPath = path.join(os.tmpdir(), `final_${generateRandomString()}.wav`);
-      finalAudioPath = await concatenateAudio(audioFiles, concatenatedPath);
-    }
-    
-    // Final check before processing
-    if (!activeConversions.has(conversionId) || activeConversions.get(conversionId).cancelled) {
-      console.log(`[CONVERT] Conversion ${conversionId} was cancelled before final processing`);
-      if (finalAudioPath) {
-        fs.unlink(finalAudioPath).catch(() => {});
-      }
-      return;
-    }
-    
-    // Convert to MP3
-    const mp3Path = await convertToMp3(finalAudioPath);
-    
-    // Read the MP3 file and encode as base64
-    const audioBuffer = await fs.readFile(mp3Path);
-    const audioBase64 = audioBuffer.toString('base64');
-    
-    // Clean up temporary file
-    fs.unlink(mp3Path).catch(console.error);
-    
-    // Update conversion with final result
-    if (activeConversions.has(conversionId) && !activeConversions.get(conversionId).cancelled) {
-      const conv = activeConversions.get(conversionId);
-      conv.completed = true;
-      conv.result = {
-        audio: `data:audio/mpeg;base64,${audioBase64}`,
-        model: modelName,
-        sentenceCount: sentences.length
-      };
-      conv.completedAt = Date.now();
-      
-      console.log(`[CONVERT] Conversion ${conversionId} completed successfully`);
-    }
-    
-  } catch (error) {
-    // Only log error if it's not a cancellation
-    if (error.message !== 'Conversion was cancelled') {
-      console.error(`[CONVERT] Error in background conversion ${conversionId}:`, error);
-    }
-    
-    if (activeConversions.has(conversionId)) {
-      const conv = activeConversions.get(conversionId);
-      if (error.message === 'Conversion was cancelled') {
-        conv.cancelled = true;
-        conv.cancelledAt = Date.now();
-      } else {
-        conv.error = error.message;
-        conv.failed = true;
-      }
-    }
-  }
-}
-
-// Get conversion status
-app.get('/conversion-status/:id', (req, res) => {
-  const conversionId = req.params.id;
-  
-  if (!activeConversions.has(conversionId)) {
-    return res.status(404).json({
-      success: false,
-      error: 'Conversion not found'
-    });
-  }
-  
-  const conversion = activeConversions.get(conversionId);
-  
-  res.json({
-    success: true,
-    conversion: {
-      id: conversion.id,
-      cancelled: conversion.cancelled,
-      completed: conversion.completed || false,
-      failed: conversion.failed || false,
-      progress: conversion.progress || { completed: 0, total: conversion.totalSentences, percentage: 0 },
-      result: conversion.result || null,
-      error: conversion.error || null,
-      startTime: conversion.startTime,
-      lastUpdate: conversion.lastUpdate || conversion.startTime
-    }
-  });
-});
-
-// Cancel conversion
-app.post('/cancel-conversion/:id', (req, res) => {
-  const conversionId = req.params.id;
-  
-  if (!activeConversions.has(conversionId)) {
-    return res.status(404).json({
-      success: false,
-      error: 'Conversion not found'
-    });
-  }
-  
-  const conversion = activeConversions.get(conversionId);
-  
-  if (conversion.completed) {
-    return res.json({
-      success: false,
-      error: 'Conversion already completed'
-    });
-  }
-  
-  // Mark as cancelled
-  conversion.cancelled = true;
-  conversion.cancelledAt = Date.now();
-  
-  // Kill all active processes
-  conversion.processes.forEach(process => {
-    try {
-      if (!process.killed) {
-        process.kill('SIGKILL'); // Use SIGKILL for immediate termination
-      }
-    } catch (error) {
-      console.error('Error killing process:', error);
-    }
-  });
-  
-  // Clear the processes array
-  conversion.processes = [];
-  
-  console.log(`[CONVERT] Conversion ${conversionId} cancelled`);
-  
-  res.json({
-    success: true,
-    message: 'Conversion cancelled'
-  });
-});
-
-// Clean up old conversions (run periodically)
-setInterval(() => {
-  const now = Date.now();
-  const maxAge = 5 * 60 * 1000; // 5 minutes
-  
-  for (const [id, conversion] of activeConversions.entries()) {
-    const age = now - conversion.startTime;
-    if (age > maxAge && (conversion.completed || conversion.failed || conversion.cancelled)) {
-      activeConversions.delete(id);
-      console.log(`[CLEANUP] Removed old conversion ${id}`);
-    }
-  }
-}, 60000); // Run every minute
-
-// Function to find an available port
-function findAvailablePort(startPort = 3000) {
-  return new Promise((resolve, reject) => {
-    const net = require('net');
-    const server = net.createServer();
-    
-    server.listen(startPort, () => {
-      const port = server.address().port;
-      server.close(() => {
-        resolve(port);
-      });
-    });
-    
-    server.on('error', (err) => {
-      if (err.code === 'EADDRINUSE') {
-        // Port is in use, try next one
-        findAvailablePort(startPort + 1).then(resolve).catch(reject);
-      } else {
-        reject(err);
-      }
-    });
-  });
-}
-
 // Start server
 async function startServer() {
   initializePaths();
-  
-  // Load user settings before scanning models
-  await loadUserSettings();
-  
   await scanModels();
   
-  try {
-    // Find an available port starting from 3000
-    PORT = await findAvailablePort(3000);
-    
-    const server = app.listen(PORT, '127.0.0.1', () => {
-      console.log(`TTS Server running on http://127.0.0.1:${PORT} (localhost only)`);
-      console.log(`Found ${availableModels.length} models`);
-      console.log(`Process queue initialized with ${processQueue.maxConcurrent} max concurrent processes`);
-      console.log(`CPU cores detected: ${CPU_CORES}`);
-      console.log(`[SETTINGS] Thread settings loaded - Auto: ${userSettings.autoDetectThreads}, Max: ${userSettings.maxThreads}`);
-      
-      // Export the port for the main process to use
-      if (typeof module !== 'undefined' && module.exports) {
-        module.exports.port = PORT;
-      }
-      global.serverPort = PORT;
-    });
-    
-    // Handle server errors
-    server.on('error', (err) => {
-      console.error('Server error:', err);
-      if (err.code === 'EADDRINUSE') {
-        console.log(`Port ${PORT} is in use, trying to find another port...`);
-        startServer(); // Retry with a different port
-      }
-    });
-    
-    return server;
-  } catch (error) {
-    console.error('Failed to start server:', error);
-    throw error;
-  }
+  app.listen(PORT, '127.0.0.1', () => {
+    console.log(`TTS Server running on http://127.0.0.1:${PORT}`);
+    console.log(`Found ${availableModels.length} models`);
+    console.log(`Process queue initialized with ${processQueue.maxConcurrent} max concurrent processes`);
+    console.log(`CPU cores detected: ${CPU_CORES}`);
+  });
 }
 
 startServer().catch(console.error);
